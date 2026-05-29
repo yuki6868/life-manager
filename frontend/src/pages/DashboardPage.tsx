@@ -3,6 +3,8 @@ import { fetchCalendarEvents } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 import { fetchTodaySummary } from "../api/dashboard";
 import type { TodaySummary } from "../api/dashboard";
+import { fetchProjects } from "../api/projects";
+import type { Project } from "../api/projects";
 import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
 
@@ -41,6 +43,19 @@ function isInProgressTask(task: Task) {
   return ["in_progress", "doing", "active"].includes(task.status);
 }
 
+function getProjectProgressRate(project: Project) {
+  if (project.estimated_minutes <= 0) return 0;
+  return Math.min(100, Math.round((project.actual_minutes / project.estimated_minutes) * 100));
+}
+
+function getRemainingMinutes(project: Project) {
+  return Math.max(0, project.estimated_minutes - project.actual_minutes);
+}
+
+function isVisibleProject(project: Project) {
+  return !["completed", "cancelled", "archived"].includes(project.status);
+}
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     pending: "未着手",
@@ -58,6 +73,7 @@ function statusLabel(status: string) {
 export default function DashboardPage() {
   const [summary, setSummary] = useState<TodaySummary | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -67,14 +83,16 @@ export default function DashboardPage() {
     setErrorMessage("");
 
     try {
-      const [summaryData, eventData, taskData] = await Promise.all([
+      const [summaryData, eventData, projectData, taskData] = await Promise.all([
         fetchTodaySummary(),
         fetchCalendarEvents(),
+        fetchProjects(),
         fetchTasks(),
       ]);
 
       setSummary(summaryData);
       setCalendarEvents(eventData);
+      setProjects(projectData);
       setTasks(taskData);
     } catch (error) {
       console.error(error);
@@ -109,6 +127,12 @@ export default function DashboardPage() {
       .filter(isInProgressTask)
       .sort((a, b) => b.actual_minutes - a.actual_minutes);
   }, [tasks]);
+
+  const progressProjects = useMemo(() => {
+    return projects
+      .filter(isVisibleProject)
+      .sort((a, b) => getProjectProgressRate(b) - getProjectProgressRate(a));
+  }, [projects]);
 
   return (
     <section style={{ padding: "32px", borderTop: "1px solid #ddd" }}>
@@ -179,6 +203,61 @@ export default function DashboardPage() {
                 </div>
               )}
             </DashboardPanel>
+
+
+          <DashboardPanel title="プロジェクト進捗">
+            {progressProjects.length === 0 ? (
+              <p>表示できるプロジェクトはありません。</p>
+            ) : (
+              <div style={{ display: "grid", gap: "12px" }}>
+                {progressProjects.map((project) => {
+                  const progressRate = getProjectProgressRate(project);
+                  const remainingMinutes = getRemainingMinutes(project);
+
+                  return (
+                    <div key={project.id} style={itemStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "12px",
+                        }}
+                      >
+                        <strong>{project.title}</strong>
+                        <span style={{ color: "#2563eb", fontWeight: 700 }}>
+                          {progressRate}%
+                        </span>
+                      </div>
+
+                      <div
+                        aria-label={`${project.title}の進捗率 ${progressRate}%`}
+                        style={{
+                          height: "10px",
+                          background: "#e5e7eb",
+                          borderRadius: "999px",
+                          overflow: "hidden",
+                          marginTop: "10px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${progressRate}%`,
+                            height: "100%",
+                            background: "#2563eb",
+                          }}
+                        />
+                      </div>
+
+                      <p style={mutedTextStyle}>
+                        予想 {formatMinutes(project.estimated_minutes)} / 実績 {formatMinutes(project.actual_minutes)} / 残り {formatMinutes(remainingMinutes)}
+                      </p>
+                      <p style={mutedTextStyle}>状態: {statusLabel(project.status)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </DashboardPanel>
 
             <DashboardPanel title="進行中タスク">
               {inProgressTasks.length === 0 ? (
