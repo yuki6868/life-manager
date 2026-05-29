@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createCalendarEvent,
+  deleteCalendarEvent,
   fetchCalendarEvents,
+  updateCalendarEvent,
 } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 
@@ -37,6 +39,7 @@ function isSameDate(dateText: string, selectedDate: string) {
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()));
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -69,20 +72,54 @@ export default function CalendarPage() {
       );
   }, [events, selectedDate]);
 
+  function resetForm() {
+    setTitle("");
+    setDescription("");
+
+    const start = new Date(`${selectedDate}T09:00`);
+    const end = new Date(`${selectedDate}T10:00`);
+
+    setStartTime(toDateTimeLocalValue(start));
+    setEndTime(toDateTimeLocalValue(end));
+    setEditingEvent(null);
+    }
+
+    function handleEdit(event: CalendarEvent) {
+    setEditingEvent(event);
+    setTitle(event.title);
+    setDescription(event.description ?? "");
+    setStartTime(event.start_time.slice(0, 16));
+    setEndTime(event.end_time.slice(0, 16));
+    }
+
+    async function handleDelete(id: number) {
+    await deleteCalendarEvent(id);
+    await loadEvents();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     if (!title.trim()) return;
 
-    await createCalendarEvent({
-      title,
-      description,
-      start_time: startTime,
-      end_time: endTime,
-    });
+    const input = {
+        title,
+        description,
+        start_time: startTime,
+        end_time: endTime,
+    };
 
-    setTitle("");
-    setDescription("");
+    if (editingEvent) {
+        await updateCalendarEvent(editingEvent.id, {
+        ...input,
+        task_id: editingEvent.task_id ?? null,
+        status: editingEvent.status,
+        });
+    } else {
+        await createCalendarEvent(input);
+    }
+
+    resetForm();
     await loadEvents();
   }
 
@@ -153,7 +190,19 @@ export default function CalendarPage() {
           />
         </label>
 
-        <button type="submit">予定を追加</button>
+            <button type="submit">
+            {editingEvent ? "予定を更新" : "予定を追加"}
+            </button>
+
+            {editingEvent && (
+            <button
+                type="button"
+                onClick={resetForm}
+                style={{ marginLeft: "8px" }}
+            >
+                キャンセル
+            </button>
+            )}
       </form>
 
       <h2>
@@ -223,6 +272,23 @@ export default function CalendarPage() {
                 <strong>{event.title}</strong>
                 <div style={{ fontSize: "13px", marginTop: "4px" }}>
                   {event.start_time.slice(11, 16)} - {event.end_time.slice(11, 16)}
+                </div>
+
+                <div style={{ marginTop: "8px" }}>
+                <button
+                    type="button"
+                    onClick={() => handleEdit(event)}
+                    style={{ marginRight: "6px" }}
+                >
+                    編集
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => handleDelete(event.id)}
+                >
+                    削除
+                </button>
                 </div>
               </div>
             );

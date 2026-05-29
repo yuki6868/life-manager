@@ -29,3 +29,15 @@ export async function createCalendarEvent(
   const res = await apiClient.post("/calendar-events/", input);
   return res.data;
 }
+
+export async function updateCalendarEvent(
+  id: number,
+  input: CalendarEventInput & { status: string }
+): Promise<CalendarEvent> {
+  const res = await apiClient.put(`/calendar-events/${id}`, input);
+  return res.data;
+}
+
+export async function deleteCalendarEvent(id: number): Promise<void> {
+  await apiClient.delete(`/calendar-events/${id}`);
+}
