@@ -8,6 +8,7 @@ class WorkLogCreate(BaseModel):
     calendar_event_id: int | None = None
     started_at: datetime
     ended_at: datetime
+    duration_minutes: int | None = None
     memo: str | None = None
 
 

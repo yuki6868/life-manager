@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.calendar_event import CalendarEvent
+from app.models.project import Project
 from app.models.task import Task
 from app.models.work_log import WorkLog
 from app.schemas.work_log import WorkLogCreate, WorkLogResponse
@@ -14,8 +15,16 @@ router = APIRouter(
 )
 
 
-def calculate_duration_minutes(started_at, ended_at) -> int:
-    duration = ended_at - started_at
+def calculate_duration_minutes(payload: WorkLogCreate) -> int:
+    if payload.duration_minutes is not None:
+        if payload.duration_minutes <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="duration_minutes must be greater than 0",
+            )
+        return payload.duration_minutes
+
+    duration = payload.ended_at - payload.started_at
     minutes = int(duration.total_seconds() // 60)
 
     if minutes <= 0:
@@ -27,15 +36,17 @@ def calculate_duration_minutes(started_at, ended_at) -> int:
     return minutes
 
 
-async def validate_task_exists(task_id: int | None, db: AsyncSession) -> None:
+async def get_task_or_none(task_id: int | None, db: AsyncSession) -> Task | None:
     if task_id is None:
-        return
+        return None
 
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
 
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    return task
 
 
 async def validate_calendar_event_exists(
@@ -52,6 +63,48 @@ async def validate_calendar_event_exists(
 
     if event is None:
         raise HTTPException(status_code=404, detail="Calendar event not found")
+
+
+async def add_actual_minutes_to_task_and_project(
+    task: Task | None,
+    duration_minutes: int,
+    db: AsyncSession,
+) -> None:
+    if task is None:
+        return
+
+    task.actual_minutes = (task.actual_minutes or 0) + duration_minutes
+
+    result = await db.execute(select(Project).where(Project.id == task.project_id))
+    project = result.scalar_one_or_none()
+
+    if project is not None:
+        project.actual_minutes = (project.actual_minutes or 0) + duration_minutes
+
+
+async def subtract_actual_minutes_from_task_and_project(
+    work_log: WorkLog,
+    db: AsyncSession,
+) -> None:
+    if work_log.task_id is None:
+        return
+
+    result = await db.execute(select(Task).where(Task.id == work_log.task_id))
+    task = result.scalar_one_or_none()
+
+    if task is None:
+        return
+
+    task.actual_minutes = max(0, (task.actual_minutes or 0) - work_log.duration_minutes)
+
+    project_result = await db.execute(select(Project).where(Project.id == task.project_id))
+    project = project_result.scalar_one_or_none()
+
+    if project is not None:
+        project.actual_minutes = max(
+            0,
+            (project.actual_minutes or 0) - work_log.duration_minutes,
+        )
 
 
 @router.get("/", response_model=list[WorkLogResponse])
@@ -81,13 +134,10 @@ async def create_work_log(
     payload: WorkLogCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    await validate_task_exists(payload.task_id, db)
+    task = await get_task_or_none(payload.task_id, db)
     await validate_calendar_event_exists(payload.calendar_event_id, db)
 
-    duration_minutes = calculate_duration_minutes(
-        payload.started_at,
-        payload.ended_at,
-    )
+    duration_minutes = calculate_duration_minutes(payload)
 
     work_log = WorkLog(
         task_id=payload.task_id,
@@ -99,6 +149,8 @@ async def create_work_log(
     )
 
     db.add(work_log)
+    await add_actual_minutes_to_task_and_project(task, duration_minutes, db)
+
     await db.commit()
     await db.refresh(work_log)
 
@@ -116,6 +168,7 @@ async def delete_work_log(
     if work_log is None:
         raise HTTPException(status_code=404, detail="Work log not found")
 
+    await subtract_actual_minutes_from_task_and_project(work_log, db)
     await db.delete(work_log)
     await db.commit()
 

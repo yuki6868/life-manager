@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createWorkLog } from "../api/workLogs";
 import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
 
@@ -25,6 +26,11 @@ function formatDateTime(date: Date | null) {
   });
 }
 
+function toApiDateTime(date: Date) {
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 19);
+}
+
 export default function TimerPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -34,6 +40,10 @@ export default function TimerPage() {
   const [runningStartedAtMs, setRunningStartedAtMs] = useState<number | null>(null);
   const [elapsedBeforePauseMs, setElapsedBeforePauseMs] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [memo, setMemo] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     fetchTasks().then(setTasks);
@@ -62,12 +72,17 @@ export default function TimerPage() {
   function handleStart() {
     const now = new Date();
 
+    setSaveMessage("");
+    setErrorMessage("");
     setStatus("running");
     setStartedAt(now);
     setEndedAt(null);
     setRunningStartedAtMs(now.getTime());
     setElapsedBeforePauseMs(0);
     setElapsedSeconds(0);
+    setMemo("");
+    setSaveMessage("");
+    setErrorMessage("");
   }
 
   function handlePause() {
@@ -87,18 +102,44 @@ export default function TimerPage() {
     setRunningStartedAtMs(Date.now());
   }
 
-  function handleStop() {
+  async function handleStop() {
+    if (!startedAt) return;
+
     const now = new Date();
     const finalElapsedMs =
       status === "running" && runningStartedAtMs !== null
         ? elapsedBeforePauseMs + (now.getTime() - runningStartedAtMs)
         : elapsedBeforePauseMs;
+    const finalElapsedSeconds = Math.floor(finalElapsedMs / 1000);
+    const durationMinutes = Math.max(1, Math.ceil(finalElapsedSeconds / 60));
 
     setStatus("stopped");
     setEndedAt(now);
     setRunningStartedAtMs(null);
     setElapsedBeforePauseMs(finalElapsedMs);
-    setElapsedSeconds(Math.floor(finalElapsedMs / 1000));
+    setElapsedSeconds(finalElapsedSeconds);
+    setIsSaving(true);
+    setSaveMessage("");
+    setErrorMessage("");
+
+    try {
+      await createWorkLog({
+        task_id: selectedTaskId ? Number(selectedTaskId) : null,
+        calendar_event_id: null,
+        started_at: toApiDateTime(startedAt),
+        ended_at: toApiDateTime(now),
+        duration_minutes: durationMinutes,
+        memo: memo.trim() || null,
+      });
+
+      setSaveMessage(`実績を保存しました（${durationMinutes}分）`);
+      setTasks(await fetchTasks());
+    } catch (error) {
+      console.error(error);
+      setErrorMessage("実績保存に失敗しました。");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleReset() {
@@ -108,6 +149,9 @@ export default function TimerPage() {
     setRunningStartedAtMs(null);
     setElapsedBeforePauseMs(0);
     setElapsedSeconds(0);
+    setMemo("");
+    setSaveMessage("");
+    setErrorMessage("");
   }
 
   return (
@@ -119,7 +163,7 @@ export default function TimerPage() {
     >
       <h1>タイマー</h1>
       <p style={{ color: "#666" }}>
-        作業の開始・一時停止・再開・停止を管理します。実績保存は次のcommitで追加します。
+        作業の開始・一時停止・再開・停止を管理します。停止時に作業ログへ保存し、タスク・プロジェクトの実績時間を更新します。
       </p>
 
       <div
@@ -192,12 +236,26 @@ export default function TimerPage() {
           <button type="button" onClick={handleResume} disabled={!canResume}>
             再開
           </button>
-          <button type="button" onClick={handleStop} disabled={!canStop}>
-            停止
+          <button type="button" onClick={handleStop} disabled={!canStop || isSaving}>
+            停止して保存
           </button>
         </div>
 
-        <button type="button" onClick={handleReset} disabled={status === "running"}>
+        <label>
+          実績メモ
+          <textarea
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            disabled={isSaving}
+            placeholder="例：API実装、エラー調査など"
+            style={{ display: "block", width: "100%", padding: "8px", minHeight: "72px" }}
+          />
+        </label>
+
+        {saveMessage && <div style={{ color: "#0a7f35" }}>{saveMessage}</div>}
+        {errorMessage && <div style={{ color: "#b00020" }}>{errorMessage}</div>}
+
+        <button type="button" onClick={handleReset} disabled={status === "running" || isSaving}>
           リセット
         </button>
 
