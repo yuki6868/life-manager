@@ -3,5 +3,6 @@ from app.models.goal import Goal
 from app.models.project import Project
 from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
+from app.models.recurrence_rule import RecurrenceRule
 
-__all__ = ["User", "Goal", "Project", "Task", "CalendarEvent"]
+__all__ = ["User", "Goal", "Project", "Task", "CalendarEvent", "RecurrenceRule"]
