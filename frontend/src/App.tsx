@@ -1,5 +1,6 @@
 import GoalsPage from "./pages/GoalsPage";
 import ProjectsPage from "./pages/ProjectsPage";
+import TasksPage from "./pages/TasksPage";
 
 function App() {
   return (
@@ -7,6 +8,8 @@ function App() {
       <GoalsPage />
       <hr />
       <ProjectsPage />
+      <hr />
+      <TasksPage />
     </>
   );
 }
