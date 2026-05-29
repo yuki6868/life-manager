@@ -1,14 +1,16 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "Freelance AI Secretary"
+    APP_NAME: str = "Life Manager"
     APP_ENV: str = "development"
-    DATABASE_URL: str = "sqlite+aiosqlite:///./freelance_ai_secretary.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./life_manager.db"
     FRONTEND_ORIGIN: str = "http://localhost:5173"
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+    )
 
 
 settings = Settings()

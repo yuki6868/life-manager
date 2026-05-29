@@ -1,9 +1,31 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.db.base import Base
+from app.db.session import engine, AsyncSessionLocal
+from app.db.init_db import create_initial_user
 
-app = FastAPI(title=settings.APP_NAME)
+import app.models
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with AsyncSessionLocal() as db:
+        await create_initial_user(db)
+
+    yield
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
