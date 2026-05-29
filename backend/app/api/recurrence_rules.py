@@ -1,11 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date, datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.models.calendar_event import CalendarEvent
 from app.models.recurrence_rule import RecurrenceRule
 from app.models.task import Task
 from app.schemas.recurrence_rule import (
+    RecurrenceGenerateResponse,
     RecurrenceRuleCreate,
     RecurrenceRuleResponse,
     RecurrenceRuleUpdate,
@@ -64,6 +68,83 @@ async def get_recurrence_rules(db: AsyncSession = Depends(get_db)):
         select(RecurrenceRule).order_by(RecurrenceRule.id.desc())
     )
     return result.scalars().all()
+
+
+
+
+def should_generate_on_date(rule: RecurrenceRule, target_date: date) -> bool:
+    if rule.frequency == "daily":
+        return True
+
+    if rule.frequency == "weekday":
+        return target_date.weekday() < 5
+
+    if rule.frequency == "weekly":
+        return rule.weekday == target_date.weekday()
+
+    return False
+
+
+@router.post("/generate", response_model=RecurrenceGenerateResponse)
+async def generate_recurring_events(
+    days: int = Query(default=30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """有効な繰り返しルールから、今日以降の予定を自動生成する。
+
+    commit 017では、今日から指定日数分の calendar_events を作成する。
+    同じタイトル・開始時刻の予定がすでにある場合は、重複作成しない。
+    """
+    result = await db.execute(
+        select(RecurrenceRule).where(RecurrenceRule.is_active == True)
+    )
+    rules = result.scalars().all()
+
+    today = date.today()
+    generated_count = 0
+    skipped_count = 0
+
+    for day_offset in range(days):
+        target_date = today + timedelta(days=day_offset)
+
+        for rule in rules:
+            if not should_generate_on_date(rule, target_date):
+                continue
+
+            start_at = datetime.combine(target_date, rule.start_time)
+            end_at = start_at + timedelta(minutes=rule.duration_minutes)
+
+            exists_result = await db.execute(
+                select(CalendarEvent).where(
+                    CalendarEvent.title == rule.title,
+                    CalendarEvent.start_time == start_at,
+                )
+            )
+            exists = exists_result.scalar_one_or_none()
+
+            if exists is not None:
+                skipped_count += 1
+                continue
+
+            db.add(
+                CalendarEvent(
+                    task_id=rule.task_id,
+                    title=rule.title,
+                    description=rule.description,
+                    start_time=start_at,
+                    end_time=end_at,
+                    status="scheduled",
+                )
+            )
+            generated_count += 1
+
+    await db.commit()
+
+    return RecurrenceGenerateResponse(
+        generated_count=generated_count,
+        skipped_count=skipped_count,
+        target_days=days,
+    )
 
 
 @router.get("/{rule_id}", response_model=RecurrenceRuleResponse)

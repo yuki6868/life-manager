@@ -26,6 +26,12 @@ export type FrequentTask = {
   usage_count: number;
 };
 
+export type RecurrenceGenerateResult = {
+  generated_count: number;
+  skipped_count: number;
+  target_days: number;
+};
+
 export type ReusableCalendarTask = {
   source_event_id: number;
   task_id?: number | null;
@@ -53,6 +59,11 @@ export async function fetchYesterdayTasks(): Promise<ReusableCalendarTask[]> {
 
 export async function fetchRecentTasks(): Promise<ReusableCalendarTask[]> {
   const res = await apiClient.get("/calendar-events/recent-tasks");
+  return res.data;
+}
+
+export async function generateRecurringEvents(days = 30): Promise<RecurrenceGenerateResult> {
+  const res = await apiClient.post(`/recurrence-rules/generate?days=${days}`);
   return res.data;
 }
 

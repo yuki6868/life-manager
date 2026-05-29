@@ -25,6 +25,12 @@ class RecurrenceRuleUpdate(BaseModel):
     is_active: bool = True
 
 
+class RecurrenceGenerateResponse(BaseModel):
+    generated_count: int
+    skipped_count: int
+    target_days: int
+
+
 class RecurrenceRuleResponse(BaseModel):
     id: int
     task_id: int | None

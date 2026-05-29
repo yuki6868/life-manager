@@ -6,6 +6,7 @@ import {
   fetchFrequentTasks,
   fetchRecentTasks,
   fetchYesterdayTasks,
+  generateRecurringEvents,
   updateCalendarEvent,
 } from "../api/calendarEvents";
 import type {
@@ -15,10 +16,27 @@ import type {
 } from "../api/calendarEvents";
 import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
+import {
+  createRecurrenceRule,
+  deleteRecurrenceRule,
+  fetchRecurrenceRules,
+} from "../api/recurrenceRules";
+import type {
+  RecurrenceFrequency,
+  RecurrenceRule,
+} from "../api/recurrenceRules";
 
 const START_HOUR = 5;
 const END_HOUR = 24;
 const HOUR_HEIGHT = 96;
+
+const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
+
+function formatFrequency(rule: RecurrenceRule) {
+  if (rule.frequency === "daily") return "毎日";
+  if (rule.frequency === "weekday") return "平日";
+  return `毎週${WEEKDAYS[rule.weekday ?? 0]}曜日`;
+}
 
 function toDateInputValue(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -77,14 +95,32 @@ export default function CalendarPage() {
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [generateMessage, setGenerateMessage] = useState("");
+  const [recurrenceRules, setRecurrenceRules] = useState<RecurrenceRule[]>([]);
+  const [recurrenceTitle, setRecurrenceTitle] = useState("");
+  const [recurrenceDescription, setRecurrenceDescription] = useState("");
+  const [recurrenceTaskId, setRecurrenceTaskId] = useState("");
+  const [recurrenceFrequency, setRecurrenceFrequency] =
+    useState<RecurrenceFrequency>("daily");
+  const [recurrenceWeekday, setRecurrenceWeekday] = useState("0");
+  const [recurrenceStartTime, setRecurrenceStartTime] = useState("09:00");
+  const [recurrenceDurationMinutes, setRecurrenceDurationMinutes] = useState("60");
 
   async function loadData() {
-    const [eventData, taskData, frequentTaskData, yesterdayTaskData, recentTaskData] = await Promise.all([
+    const [
+      eventData,
+      taskData,
+      frequentTaskData,
+      yesterdayTaskData,
+      recentTaskData,
+      recurrenceRuleData,
+    ] = await Promise.all([
       fetchCalendarEvents(),
       fetchTasks(),
       fetchFrequentTasks(),
       fetchYesterdayTasks(),
       fetchRecentTasks(),
+      fetchRecurrenceRules(),
     ]);
 
     setEvents(eventData);
@@ -92,6 +128,7 @@ export default function CalendarPage() {
     setFrequentTasks(frequentTaskData);
     setYesterdayTasks(yesterdayTaskData);
     setRecentTasks(recentTaskData);
+    setRecurrenceRules(recurrenceRuleData);
   }
 
   useEffect(() => {
@@ -184,6 +221,64 @@ export default function CalendarPage() {
     });
 
     await loadData();
+  }
+
+
+  async function handleGenerateRecurringEvents() {
+    const result = await generateRecurringEvents(30);
+
+    setGenerateMessage(
+      `繰り返し予定を${result.generated_count}件作成しました。重複${result.skipped_count}件はスキップしました。`
+    );
+
+    await loadData();
+  }
+
+
+  async function handleCreateRecurrenceRule(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!recurrenceTitle.trim()) return;
+
+    await createRecurrenceRule({
+      task_id: recurrenceTaskId ? Number(recurrenceTaskId) : null,
+      title: recurrenceTitle,
+      description: recurrenceDescription || null,
+      frequency: recurrenceFrequency,
+      weekday:
+        recurrenceFrequency === "weekly" ? Number(recurrenceWeekday) : null,
+      start_time: recurrenceStartTime,
+      duration_minutes: Number(recurrenceDurationMinutes),
+      is_active: true,
+    });
+
+    setRecurrenceTitle("");
+    setRecurrenceDescription("");
+    setRecurrenceTaskId("");
+    setRecurrenceFrequency("daily");
+    setRecurrenceWeekday("0");
+    setRecurrenceStartTime("09:00");
+    setRecurrenceDurationMinutes("60");
+    setGenerateMessage("");
+
+    await loadData();
+  }
+
+  async function handleDeleteRecurrenceRule(id: number) {
+    await deleteRecurrenceRule(id);
+    setGenerateMessage("");
+    await loadData();
+  }
+
+  function handleSelectRecurrenceTask(taskId: string) {
+    setRecurrenceTaskId(taskId);
+
+    const task = tasks.find((item) => item.id === Number(taskId));
+    if (!task) return;
+
+    setRecurrenceTitle(task.title);
+    setRecurrenceDescription(task.description ?? "");
+    setRecurrenceDurationMinutes(String(task.estimated_minutes));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -320,6 +415,155 @@ export default function CalendarPage() {
           </button>
         )}
       </form>
+
+
+      <section
+        style={{
+          maxWidth: "760px",
+          marginBottom: "32px",
+          padding: "16px",
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+        }}
+      >
+        <h2>繰り返し予定</h2>
+        <p style={{ color: "#666", marginTop: 0 }}>
+          毎日・平日・毎週のルールを作成して、今日以降30日分の予定を自動生成できます。
+        </p>
+
+        <form
+          onSubmit={handleCreateRecurrenceRule}
+          style={{ display: "grid", gap: "12px", marginBottom: "20px" }}
+        >
+          <label>
+            タスクから作成
+            <select
+              value={recurrenceTaskId}
+              onChange={(e) => handleSelectRecurrenceTask(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            >
+              <option value="">タスクを選択しない</option>
+              {tasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}（{task.estimated_minutes}分）
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <input
+            value={recurrenceTitle}
+            onChange={(e) => setRecurrenceTitle(e.target.value)}
+            placeholder="例：毎朝のメール確認"
+            style={{ padding: "8px" }}
+          />
+
+          <textarea
+            value={recurrenceDescription}
+            onChange={(e) => setRecurrenceDescription(e.target.value)}
+            placeholder="メモ"
+            style={{ padding: "8px", height: "64px" }}
+          />
+
+          <label>
+            繰り返し
+            <select
+              value={recurrenceFrequency}
+              onChange={(e) =>
+                setRecurrenceFrequency(e.target.value as RecurrenceFrequency)
+              }
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            >
+              <option value="daily">毎日</option>
+              <option value="weekday">平日</option>
+              <option value="weekly">毎週・曜日指定</option>
+            </select>
+          </label>
+
+          {recurrenceFrequency === "weekly" && (
+            <label>
+              曜日
+              <select
+                value={recurrenceWeekday}
+                onChange={(e) => setRecurrenceWeekday(e.target.value)}
+                style={{ display: "block", padding: "8px", width: "100%" }}
+              >
+                {WEEKDAYS.map((weekday, index) => (
+                  <option key={weekday} value={index}>
+                    {weekday}曜日
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <label>
+            開始時刻
+            <input
+              type="time"
+              value={recurrenceStartTime}
+              onChange={(e) => setRecurrenceStartTime(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            />
+          </label>
+
+          <label>
+            所要時間（分）
+            <input
+              type="number"
+              min="1"
+              value={recurrenceDurationMinutes}
+              onChange={(e) => setRecurrenceDurationMinutes(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            />
+          </label>
+
+          <button type="submit">繰り返しルールを追加</button>
+        </form>
+
+        <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
+          {recurrenceRules.length === 0 ? (
+            <p>繰り返しルールはまだありません。</p>
+          ) : (
+            recurrenceRules.map((rule) => (
+              <div
+                key={rule.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "10px 12px",
+                  border: "1px solid #eee",
+                  borderRadius: "10px",
+                }}
+              >
+                <div>
+                  <strong>{rule.title}</strong>
+                  <div style={{ fontSize: "13px", color: "#666" }}>
+                    {formatFrequency(rule)} / {rule.start_time.slice(0, 5)} / {rule.duration_minutes}分
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteRecurrenceRule(rule.id)}
+                >
+                  削除
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <button type="button" onClick={handleGenerateRecurringEvents}>
+          繰り返し予定を生成
+        </button>
+
+        {generateMessage && (
+          <p style={{ color: "#32627a", marginBottom: 0 }}>{generateMessage}</p>
+        )}
+      </section>
 
       <section
         style={{
