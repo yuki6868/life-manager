@@ -27,4 +27,4 @@ dist-ssr
 *.db
 
 # life manager
-life_manager.db
+backend/life_manager.db
