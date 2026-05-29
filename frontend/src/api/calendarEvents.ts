@@ -18,8 +18,21 @@ export type CalendarEventInput = {
   end_time: string;
 };
 
+export type FrequentTask = {
+  task_id?: number | null;
+  title: string;
+  description?: string | null;
+  estimated_minutes: number;
+  usage_count: number;
+};
+
 export async function fetchCalendarEvents(): Promise<CalendarEvent[]> {
   const res = await apiClient.get("/calendar-events/");
+  return res.data;
+}
+
+export async function fetchFrequentTasks(): Promise<FrequentTask[]> {
+  const res = await apiClient.get("/calendar-events/frequent-tasks");
   return res.data;
 }
 

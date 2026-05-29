@@ -31,3 +31,11 @@ class CalendarEventResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class FrequentTaskResponse(BaseModel):
+    task_id: int | None
+    title: str
+    description: str | None = None
+    estimated_minutes: int
+    usage_count: int

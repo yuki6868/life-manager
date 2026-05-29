@@ -222,3 +222,6 @@ __marimo__/
 
 # life manager
 backend/life_manager.db
+
+# patch
+*.patch

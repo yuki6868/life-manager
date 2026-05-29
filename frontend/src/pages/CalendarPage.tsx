@@ -3,9 +3,10 @@ import {
   createCalendarEvent,
   deleteCalendarEvent,
   fetchCalendarEvents,
+  fetchFrequentTasks,
   updateCalendarEvent,
 } from "../api/calendarEvents";
-import type { CalendarEvent } from "../api/calendarEvents";
+import type { CalendarEvent, FrequentTask } from "../api/calendarEvents";
 import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
 
@@ -40,6 +41,7 @@ function isSameDate(dateText: string, selectedDate: string) {
 
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [frequentTasks, setFrequentTasks] = useState<FrequentTask[]>([]);
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()));
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
@@ -60,13 +62,15 @@ export default function CalendarPage() {
   const [selectedTaskId, setSelectedTaskId] = useState("");
 
   async function loadData() {
-    const [eventData, taskData] = await Promise.all([
-        fetchCalendarEvents(),
-        fetchTasks(),
+    const [eventData, taskData, frequentTaskData] = await Promise.all([
+      fetchCalendarEvents(),
+      fetchTasks(),
+      fetchFrequentTasks(),
     ]);
 
     setEvents(eventData);
     setTasks(taskData);
+    setFrequentTasks(frequentTaskData);
   }
 
   useEffect(() => {
@@ -93,27 +97,24 @@ export default function CalendarPage() {
     setStartTime(toDateTimeLocalValue(start));
     setEndTime(toDateTimeLocalValue(end));
     setEditingEvent(null);
-    }
+  }
 
-    function handleEdit(event: CalendarEvent) {
+  function handleEdit(event: CalendarEvent) {
     setEditingEvent(event);
     setTitle(event.title);
     setDescription(event.description ?? "");
     setStartTime(event.start_time.slice(0, 16));
     setEndTime(event.end_time.slice(0, 16));
-    }
+    setSelectedTaskId(event.task_id ? String(event.task_id) : "");
+  }
 
-    async function handleDelete(id: number) {
+  async function handleDelete(id: number) {
     await deleteCalendarEvent(id);
     await loadData();
   }
 
-  function handleSelectTask(taskId: string) {
-    setSelectedTaskId(taskId);
-
-    const task = tasks.find((item) => item.id === Number(taskId));
-    if (!task) return;
-
+  function applyTaskToForm(task: Pick<Task, "id" | "title" | "description" | "estimated_minutes">) {
+    setSelectedTaskId(String(task.id));
     setTitle(task.title);
     setDescription(task.description ?? "");
 
@@ -123,27 +124,51 @@ export default function CalendarPage() {
     setEndTime(toDateTimeLocalValue(end));
   }
 
+  function handleSelectTask(taskId: string) {
+    setSelectedTaskId(taskId);
+
+    const task = tasks.find((item) => item.id === Number(taskId));
+    if (!task) return;
+
+    applyTaskToForm(task);
+  }
+
+  async function handleAddFrequentTask(task: FrequentTask) {
+    const start = new Date(startTime);
+    const end = new Date(start.getTime() + task.estimated_minutes * 60000);
+
+    await createCalendarEvent({
+      task_id: task.task_id ?? null,
+      title: task.title,
+      description: task.description ?? "",
+      start_time: startTime,
+      end_time: toDateTimeLocalValue(end),
+    });
+
+    resetForm();
+    await loadData();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     if (!title.trim()) return;
 
     const input = {
-    task_id: selectedTaskId ? Number(selectedTaskId) : null,
-    title,
-    description,
-    start_time: startTime,
-    end_time: endTime,
+      task_id: selectedTaskId ? Number(selectedTaskId) : null,
+      title,
+      description,
+      start_time: startTime,
+      end_time: endTime,
     };
 
     if (editingEvent) {
-        await updateCalendarEvent(editingEvent.id, {
+      await updateCalendarEvent(editingEvent.id, {
         ...input,
-        task_id: editingEvent.task_id ?? null,
         status: editingEvent.status,
-        });
+      });
     } else {
-        await createCalendarEvent(input);
+      await createCalendarEvent(input);
     }
 
     resetForm();
@@ -181,22 +206,22 @@ export default function CalendarPage() {
           borderRadius: "12px",
         }}
       >
-        <h2>予定追加</h2>
+        <h2>{editingEvent ? "予定編集" : "予定追加"}</h2>
 
         <label>
-        タスクから予定化
-        <select
+          タスクから予定化
+          <select
             value={selectedTaskId}
             onChange={(e) => handleSelectTask(e.target.value)}
             style={{ display: "block", padding: "8px", width: "100%" }}
-        >
+          >
             <option value="">タスクを選択しない</option>
             {tasks.map((task) => (
-            <option key={task.id} value={task.id}>
+              <option key={task.id} value={task.id}>
                 {task.title}（{task.estimated_minutes}分）
-            </option>
+              </option>
             ))}
-        </select>
+          </select>
         </label>
 
         <input
@@ -215,27 +240,27 @@ export default function CalendarPage() {
 
         <label>
           開始
-            <input
+          <input
             type="datetime-local"
             value={startTime}
             onChange={(e) => {
-                const nextStartTime = e.target.value;
-                setStartTime(nextStartTime);
+              const nextStartTime = e.target.value;
+              setStartTime(nextStartTime);
 
-                const task = tasks.find(
+              const task = tasks.find(
                 (item) => item.id === Number(selectedTaskId)
-                );
+              );
 
-                if (task) {
+              if (task) {
                 const start = new Date(nextStartTime);
                 const end = new Date(
-                    start.getTime() + task.estimated_minutes * 60000
+                  start.getTime() + task.estimated_minutes * 60000
                 );
                 setEndTime(toDateTimeLocalValue(end));
-                }
+              }
             }}
             style={{ display: "block", padding: "8px", width: "100%" }}
-            />
+          />
         </label>
 
         <label>
@@ -248,24 +273,65 @@ export default function CalendarPage() {
           />
         </label>
 
-            <button type="submit">
-            {editingEvent ? "予定を更新" : "予定を追加"}
-            </button>
+        <button type="submit">
+          {editingEvent ? "予定を更新" : "予定を追加"}
+        </button>
 
-            {editingEvent && (
-            <button
-                type="button"
-                onClick={resetForm}
-                style={{ marginLeft: "8px" }}
-            >
-                キャンセル
-            </button>
-            )}
+        {editingEvent && (
+          <button type="button" onClick={resetForm}>
+            キャンセル
+          </button>
+        )}
       </form>
 
-      <h2>
-        {selectedDate} の予定
-      </h2>
+      <section
+        style={{
+          maxWidth: "760px",
+          marginBottom: "32px",
+          padding: "16px",
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+        }}
+      >
+        <h2>よく使うタスク</h2>
+        <p style={{ color: "#666", marginTop: 0 }}>
+          過去に予定へ追加した回数が多いタスクです。開始時刻を決めて押すと、すぐ予定に入れられます。
+        </p>
+
+        {frequentTasks.length === 0 ? (
+          <p>まだよく使うタスクはありません。予定を追加すると表示されます。</p>
+        ) : (
+          <div style={{ display: "grid", gap: "8px" }}>
+            {frequentTasks.map((task) => (
+              <div
+                key={`${task.task_id ?? "event"}-${task.title}`}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "10px 12px",
+                  border: "1px solid #eee",
+                  borderRadius: "10px",
+                }}
+              >
+                <div>
+                  <strong>{task.title}</strong>
+                  <div style={{ fontSize: "13px", color: "#666" }}>
+                    {task.estimated_minutes}分 / {task.usage_count}回使用
+                  </div>
+                </div>
+
+                <button type="button" onClick={() => handleAddFrequentTask(task)}>
+                  予定に追加
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <h2>{selectedDate} の予定</h2>
 
       <div
         style={{
@@ -333,20 +399,17 @@ export default function CalendarPage() {
                 </div>
 
                 <div style={{ marginTop: "8px" }}>
-                <button
+                  <button
                     type="button"
                     onClick={() => handleEdit(event)}
                     style={{ marginRight: "6px" }}
-                >
+                  >
                     編集
-                </button>
+                  </button>
 
-                <button
-                    type="button"
-                    onClick={() => handleDelete(event.id)}
-                >
+                  <button type="button" onClick={() => handleDelete(event.id)}>
                     削除
-                </button>
+                  </button>
                 </div>
               </div>
             );
