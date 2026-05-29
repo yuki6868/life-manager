@@ -1,0 +1,31 @@
+import { apiClient } from "./client";
+
+export type CalendarEvent = {
+  id: number;
+  task_id?: number | null;
+  title: string;
+  description?: string | null;
+  start_time: string;
+  end_time: string;
+  status: string;
+};
+
+export type CalendarEventInput = {
+  task_id?: number | null;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+};
+
+export async function fetchCalendarEvents(): Promise<CalendarEvent[]> {
+  const res = await apiClient.get("/calendar-events/");
+  return res.data;
+}
+
+export async function createCalendarEvent(
+  input: CalendarEventInput
+): Promise<CalendarEvent> {
+  const res = await apiClient.post("/calendar-events/", input);
+  return res.data;
+}
