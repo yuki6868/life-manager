@@ -7,6 +7,7 @@ from app.models.recurrence_rule import RecurrenceRule
 from app.models.work_log import WorkLog
 from app.models.reflection import Reflection
 from app.models.project_reflection import ProjectReflection
+from app.models.gap_task import GapTask
 
 __all__ = [
     "User",
@@ -18,4 +19,5 @@ __all__ = [
     "WorkLog",
     "Reflection",
     "ProjectReflection",
+    "GapTask",
 ]
