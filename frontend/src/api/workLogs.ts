@@ -31,3 +31,12 @@ export async function createWorkLog(input: WorkLogInput): Promise<WorkLog> {
   const res = await apiClient.post("/work-logs/", input);
   return res.data;
 }
+
+export async function fetchWorkLogs(): Promise<WorkLog[]> {
+  const res = await apiClient.get("/work-logs/");
+  return res.data;
+}
+
+export async function deleteWorkLog(id: number): Promise<void> {
+  await apiClient.delete(`/work-logs/${id}`);
+}

@@ -21,6 +21,8 @@ import {
   deleteRecurrenceRule,
   fetchRecurrenceRules,
 } from "../api/recurrenceRules";
+import { createWorkLog, fetchWorkLogs } from "../api/workLogs";
+import type { WorkLog } from "../api/workLogs";
 import type {
   RecurrenceFrequency,
   RecurrenceRule,
@@ -63,6 +65,35 @@ function isSameDate(dateText: string, selectedDate: string) {
   return dateText.slice(0, 10) === selectedDate;
 }
 
+function formatMinutes(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+
+  if (hours === 0) {
+    return `${restMinutes}分`;
+  }
+
+  if (restMinutes === 0) {
+    return `${hours}時間`;
+  }
+
+  return `${hours}時間${restMinutes}分`;
+}
+
+function getComparisonLabel(actualMinutes: number, plannedMinutes: number) {
+  const difference = actualMinutes - plannedMinutes;
+
+  if (difference === 0) {
+    return "予定通り";
+  }
+
+  if (difference > 0) {
+    return `予定より${formatMinutes(difference)}超過`;
+  }
+
+  return `予定より${formatMinutes(Math.abs(difference))}短縮`;
+}
+
 
 function applyDateToTime(dateText: string, timeSource: string) {
   const source = new Date(timeSource);
@@ -72,8 +103,32 @@ function applyDateToTime(dateText: string, timeSource: string) {
   return `${dateText}T${hours}:${minutes}`;
 }
 
+function getTimeLabel(start: string, end: string) {
+  return `${start.slice(11, 16)} - ${end.slice(11, 16)}`;
+}
+
+function getWorkLogTitle(
+  workLog: WorkLog,
+  events: CalendarEvent[],
+  tasks: Task[]
+) {
+  const linkedEvent = events.find((event) => event.id === workLog.calendar_event_id);
+  if (linkedEvent) {
+    return linkedEvent.title;
+  }
+
+  const linkedTask = tasks.find((task) => task.id === workLog.task_id);
+  if (linkedTask) {
+    return linkedTask.title;
+  }
+
+  return workLog.memo || "実績";
+}
+
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [frequentTasks, setFrequentTasks] = useState<FrequentTask[]>([]);
   const [yesterdayTasks, setYesterdayTasks] = useState<ReusableCalendarTask[]>([]);
   const [recentTasks, setRecentTasks] = useState<ReusableCalendarTask[]>([]);
@@ -105,6 +160,20 @@ export default function CalendarPage() {
   const [recurrenceWeekday, setRecurrenceWeekday] = useState("0");
   const [recurrenceStartTime, setRecurrenceStartTime] = useState("09:00");
   const [recurrenceDurationMinutes, setRecurrenceDurationMinutes] = useState("60");
+  const [actualTaskId, setActualTaskId] = useState("");
+  const [actualCalendarEventId, setActualCalendarEventId] = useState("");
+  const [actualStartedAt, setActualStartedAt] = useState(() => {
+    const now = new Date();
+    now.setHours(9, 0, 0, 0);
+    return toDateTimeLocalValue(now);
+  });
+  const [actualEndedAt, setActualEndedAt] = useState(() => {
+    const now = new Date();
+    now.setHours(10, 0, 0, 0);
+    return toDateTimeLocalValue(now);
+  });
+  const [actualMemo, setActualMemo] = useState("");
+
 
   async function loadData() {
     const [
@@ -114,6 +183,7 @@ export default function CalendarPage() {
       yesterdayTaskData,
       recentTaskData,
       recurrenceRuleData,
+      workLogData,
     ] = await Promise.all([
       fetchCalendarEvents(),
       fetchTasks(),
@@ -121,6 +191,7 @@ export default function CalendarPage() {
       fetchYesterdayTasks(),
       fetchRecentTasks(),
       fetchRecurrenceRules(),
+      fetchWorkLogs(),
     ]);
 
     setEvents(eventData);
@@ -129,6 +200,7 @@ export default function CalendarPage() {
     setYesterdayTasks(yesterdayTaskData);
     setRecentTasks(recentTaskData);
     setRecurrenceRules(recurrenceRuleData);
+    setWorkLogs(workLogData);
   }
 
   useEffect(() => {
@@ -143,6 +215,28 @@ export default function CalendarPage() {
           new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
       );
   }, [events, selectedDate]);
+
+  const dayWorkLogs = useMemo(() => {
+    return workLogs
+      .filter((workLog) => isSameDate(workLog.started_at, selectedDate))
+      .sort(
+        (a, b) =>
+          new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+      );
+  }, [workLogs, selectedDate]);
+
+  const actualMinutesByEventId = useMemo(() => {
+    return workLogs.reduce<Record<number, number>>((acc, workLog) => {
+      if (workLog.calendar_event_id == null) {
+        return acc;
+      }
+
+      acc[workLog.calendar_event_id] =
+        (acc[workLog.calendar_event_id] ?? 0) + workLog.duration_minutes;
+
+      return acc;
+    }, {});
+  }, [workLogs]);
 
   function resetForm() {
     setTitle("");
@@ -279,6 +373,49 @@ export default function CalendarPage() {
     setRecurrenceTitle(task.title);
     setRecurrenceDescription(task.description ?? "");
     setRecurrenceDurationMinutes(String(task.estimated_minutes));
+  }
+
+  function resetActualForm() {
+    setActualTaskId("");
+    setActualCalendarEventId("");
+
+    const start = new Date(`${selectedDate}T09:00`);
+    const end = new Date(`${selectedDate}T10:00`);
+
+    setActualStartedAt(toDateTimeLocalValue(start));
+    setActualEndedAt(toDateTimeLocalValue(end));
+    setActualMemo("");
+  }
+
+  function handleSelectActualEvent(eventId: string) {
+    setActualCalendarEventId(eventId);
+
+    const event = dayEvents.find((item) => item.id === Number(eventId));
+    if (!event) return;
+
+    setActualTaskId(event.task_id ? String(event.task_id) : "");
+    setActualStartedAt(event.start_time.slice(0, 16));
+    setActualEndedAt(event.end_time.slice(0, 16));
+    setActualMemo(event.title);
+  }
+
+  async function handleCreateActualLog(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!actualStartedAt || !actualEndedAt) return;
+
+    await createWorkLog({
+      task_id: actualTaskId ? Number(actualTaskId) : null,
+      calendar_event_id: actualCalendarEventId
+        ? Number(actualCalendarEventId)
+        : null,
+      started_at: actualStartedAt,
+      ended_at: actualEndedAt,
+      memo: actualMemo || null,
+    });
+
+    resetActualForm();
+    await loadData();
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -707,18 +844,115 @@ export default function CalendarPage() {
         )}
       </section>
 
-      <h2>{selectedDate} の予定</h2>
+      <section
+        style={{
+          maxWidth: "760px",
+          marginBottom: "32px",
+          padding: "16px",
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+        }}
+      >
+        <h2>実績を手入力</h2>
+        <p style={{ color: "#666", marginTop: 0 }}>
+          タイマーを使わなかった作業も、開始・終了時刻を入力して実績カレンダーへ追加できます。
+        </p>
+
+        <form
+          onSubmit={handleCreateActualLog}
+          style={{ display: "grid", gap: "12px" }}
+        >
+          <label>
+            予定に紐づける
+            <select
+              value={actualCalendarEventId}
+              onChange={(e) => handleSelectActualEvent(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            >
+              <option value="">予定に紐づけない</option>
+              {dayEvents.map((event) => (
+                <option key={event.id} value={event.id}>
+                  {event.title}（{event.start_time.slice(11, 16)} - {event.end_time.slice(11, 16)}）
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            タスク
+            <select
+              value={actualTaskId}
+              onChange={(e) => setActualTaskId(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            >
+              <option value="">タスクを選択しない</option>
+              {tasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            開始
+            <input
+              type="datetime-local"
+              value={actualStartedAt}
+              onChange={(e) => setActualStartedAt(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            />
+          </label>
+
+          <label>
+            終了
+            <input
+              type="datetime-local"
+              value={actualEndedAt}
+              onChange={(e) => setActualEndedAt(e.target.value)}
+              style={{ display: "block", padding: "8px", width: "100%" }}
+            />
+          </label>
+
+          <textarea
+            value={actualMemo}
+            onChange={(e) => setActualMemo(e.target.value)}
+            placeholder="実績メモ"
+            style={{ padding: "8px", height: "72px" }}
+          />
+
+          <div>
+            <button type="submit" style={{ marginRight: "8px" }}>
+              実績を追加
+            </button>
+            <button type="button" onClick={resetActualForm}>
+              リセット
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <h2>{selectedDate} の予定・実績</h2>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "80px 1fr",
+          gridTemplateColumns: "80px minmax(320px, 1fr) minmax(320px, 1fr)",
           borderTop: "1px solid #eee",
           position: "relative",
-          maxWidth: "760px",
+          maxWidth: "1180px",
+          overflowX: "auto",
         }}
       >
         <div>
+          <div
+            style={{
+              height: "40px",
+              borderBottom: "1px solid #eee",
+              boxSizing: "border-box",
+            }}
+          />
+
           {hours.map((hour) => (
             <div
               key={hour}
@@ -738,58 +972,182 @@ export default function CalendarPage() {
 
         <div
           style={{
-            position: "relative",
-            height: `${(END_HOUR - START_HOUR + 1) * HOUR_HEIGHT}px`,
             borderLeft: "1px solid #eee",
-            background:
-              "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
+            borderRight: "1px solid #eee",
           }}
         >
-          {dayEvents.map((event) => {
-            const top = (getMinutesFromStart(event.start_time) / 60) * HOUR_HEIGHT;
-            const height =
-              (getDurationMinutes(event.start_time, event.end_time) / 60) *
-              HOUR_HEIGHT;
+          <div
+            style={{
+              height: "40px",
+              borderBottom: "1px solid #eee",
+              boxSizing: "border-box",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              background: "#fafafa",
+            }}
+          >
+            予定
+          </div>
 
-            return (
-              <div
-                key={event.id}
-                style={{
-                  position: "absolute",
-                  top: `${top}px`,
-                  left: "12px",
-                  right: "12px",
-                  height: `${height}px`,
-                  background: "#d9f3ff",
-                  borderLeft: "4px solid #7cc7f2",
-                  borderRadius: "12px",
-                  padding: "10px",
-                  boxSizing: "border-box",
-                  overflow: "hidden",
-                  color: "#32627a",
-                }}
-              >
-                <strong>{event.title}</strong>
-                <div style={{ fontSize: "13px", marginTop: "4px" }}>
-                  {event.start_time.slice(11, 16)} - {event.end_time.slice(11, 16)}
-                </div>
+          <div
+            style={{
+              position: "relative",
+              height: `${(END_HOUR - START_HOUR + 1) * HOUR_HEIGHT}px`,
+              background:
+                "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
+            }}
+          >
+            {dayEvents.map((event) => {
+              const top =
+                (getMinutesFromStart(event.start_time) / 60) * HOUR_HEIGHT;
+              const height =
+                (getDurationMinutes(event.start_time, event.end_time) / 60) *
+                HOUR_HEIGHT;
+              const plannedMinutes = getDurationMinutes(
+                event.start_time,
+                event.end_time
+              );
+              const actualMinutes = actualMinutesByEventId[event.id] ?? 0;
+              const hasActualMinutes = actualMinutes > 0;
 
-                <div style={{ marginTop: "8px" }}>
-                  <button
-                    type="button"
-                    onClick={() => handleEdit(event)}
-                    style={{ marginRight: "6px" }}
+              return (
+                <div
+                  key={event.id}
+                  style={{
+                    position: "absolute",
+                    top: `${top}px`,
+                    left: "12px",
+                    right: "12px",
+                    height: `${height}px`,
+                    background: "#d9f3ff",
+                    borderLeft: "4px solid #7cc7f2",
+                    borderRadius: "12px",
+                    padding: "10px",
+                    boxSizing: "border-box",
+                    overflow: "hidden",
+                    color: "#32627a",
+                  }}
+                >
+                  <strong>{event.title}</strong>
+                  <div style={{ fontSize: "13px", marginTop: "4px" }}>
+                    {getTimeLabel(event.start_time, event.end_time)}
+                    （予定 {formatMinutes(plannedMinutes)}）
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: "13px",
+                      marginTop: "4px",
+                      fontWeight: 700,
+                      color: hasActualMinutes ? "#1f7a4d" : "#777",
+                    }}
                   >
-                    編集
-                  </button>
+                    実績 {hasActualMinutes ? formatMinutes(actualMinutes) : "未登録"}
+                    {hasActualMinutes && (
+                      <span style={{ marginLeft: "8px", fontWeight: 400 }}>
+                        {getComparisonLabel(actualMinutes, plannedMinutes)}
+                      </span>
+                    )}
+                  </div>
 
-                  <button type="button" onClick={() => handleDelete(event.id)}>
-                    削除
-                  </button>
+                  <div style={{ marginTop: "8px" }}>
+                    <button
+                      type="button"
+                      onClick={() => handleEdit(event)}
+                      style={{ marginRight: "6px" }}
+                    >
+                      編集
+                    </button>
+
+                    <button type="button" onClick={() => handleDelete(event.id)}>
+                      削除
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ borderRight: "1px solid #eee" }}>
+          <div
+            style={{
+              height: "40px",
+              borderBottom: "1px solid #eee",
+              boxSizing: "border-box",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              background: "#fafafa",
+            }}
+          >
+            実績
+          </div>
+
+          <div
+            style={{
+              position: "relative",
+              height: `${(END_HOUR - START_HOUR + 1) * HOUR_HEIGHT}px`,
+              background:
+                "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
+            }}
+          >
+            {dayWorkLogs.map((workLog) => {
+              const top =
+                (getMinutesFromStart(workLog.started_at) / 60) * HOUR_HEIGHT;
+              const height =
+                (getDurationMinutes(workLog.started_at, workLog.ended_at) / 60) *
+                HOUR_HEIGHT;
+              const plannedMinutes = workLog.planned_minutes;
+              const differenceMinutes = workLog.difference_minutes;
+
+              return (
+                <div
+                  key={workLog.id}
+                  style={{
+                    position: "absolute",
+                    top: `${top}px`,
+                    left: "12px",
+                    right: "12px",
+                    height: `${height}px`,
+                    background: "#e8f7e8",
+                    borderLeft: "4px solid #66c27a",
+                    borderRadius: "12px",
+                    padding: "10px",
+                    boxSizing: "border-box",
+                    overflow: "hidden",
+                    color: "#2f6b3d",
+                  }}
+                >
+                  <strong>{getWorkLogTitle(workLog, events, tasks)}</strong>
+                  <div style={{ fontSize: "13px", marginTop: "4px" }}>
+                    {getTimeLabel(workLog.started_at, workLog.ended_at)}
+                    （実績 {formatMinutes(workLog.duration_minutes)}）
+                  </div>
+
+                  {plannedMinutes != null && differenceMinutes != null && (
+                    <div style={{ fontSize: "13px", marginTop: "4px" }}>
+                      予定 {formatMinutes(plannedMinutes)} /{" "}
+                      {differenceMinutes === 0
+                        ? "予定通り"
+                        : differenceMinutes > 0
+                          ? `${formatMinutes(differenceMinutes)}超過`
+                          : `${formatMinutes(Math.abs(differenceMinutes))}短縮`}
+                    </div>
+                  )}
+
+                  {workLog.memo && (
+                    <div style={{ fontSize: "12px", marginTop: "4px" }}>
+                      {workLog.memo}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

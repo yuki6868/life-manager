@@ -3,6 +3,7 @@ import GoalsPage from "./pages/GoalsPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import TasksPage from "./pages/TasksPage";
 import TimerPage from "./pages/TimerPage";
+import WorkLogsPage from "./pages/WorkLogsPage";
 
 function App() {
   return (
@@ -16,6 +17,8 @@ function App() {
       <CalendarPage />
       <hr />
       <TimerPage />
+      <hr />
+      <WorkLogsPage />
     </>
   );
 }
