@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createWorkLog } from "../api/workLogs";
+import { fetchCalendarEvents } from "../api/calendarEvents";
+import type { CalendarEvent } from "../api/calendarEvents";
 import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
 
@@ -33,7 +35,9 @@ function toApiDateTime(date: Date) {
 
 export default function TimerPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedCalendarEventId, setSelectedCalendarEventId] = useState("");
   const [status, setStatus] = useState<TimerStatus>("idle");
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [endedAt, setEndedAt] = useState<Date | null>(null);
@@ -46,7 +50,10 @@ export default function TimerPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    fetchTasks().then(setTasks);
+    Promise.all([fetchTasks(), fetchCalendarEvents()]).then(([taskData, eventData]) => {
+      setTasks(taskData);
+      setCalendarEvents(eventData);
+    });
   }, []);
 
   useEffect(() => {
@@ -64,10 +71,49 @@ export default function TimerPage() {
     return tasks.find((task) => task.id === Number(selectedTaskId)) ?? null;
   }, [selectedTaskId, tasks]);
 
+  const selectableCalendarEvents = useMemo(() => {
+    return calendarEvents
+      .filter((event) => event.status !== "cancelled")
+      .sort(
+        (a, b) =>
+          new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      );
+  }, [calendarEvents]);
+
+  const selectedCalendarEvent = useMemo(() => {
+    return (
+      calendarEvents.find((event) => event.id === Number(selectedCalendarEventId)) ??
+      null
+    );
+  }, [calendarEvents, selectedCalendarEventId]);
+
   const canStart = status === "idle" || status === "stopped";
   const canPause = status === "running";
   const canResume = status === "paused";
   const canStop = status === "running" || status === "paused";
+
+  function handleSelectCalendarEvent(eventId: string) {
+    setSelectedCalendarEventId(eventId);
+
+    const event = calendarEvents.find((item) => item.id === Number(eventId));
+    if (event?.task_id) {
+      setSelectedTaskId(String(event.task_id));
+    }
+  }
+
+  function getPlannedMinutes(event: CalendarEvent | null) {
+    if (!event) return null;
+
+    const start = new Date(event.start_time);
+    const end = new Date(event.end_time);
+    return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  }
+
+  function formatDifferenceMinutes(value: number | null | undefined) {
+    if (value === null || value === undefined) return "";
+    if (value === 0) return "予定どおり";
+    return value > 0 ? `予定より${value}分超過` : `予定より${Math.abs(value)}分短縮`;
+  }
 
   function handleStart() {
     const now = new Date();
@@ -123,17 +169,25 @@ export default function TimerPage() {
     setErrorMessage("");
 
     try {
-      await createWorkLog({
+      const savedLog = await createWorkLog({
         task_id: selectedTaskId ? Number(selectedTaskId) : null,
-        calendar_event_id: null,
+        calendar_event_id: selectedCalendarEventId ? Number(selectedCalendarEventId) : null,
         started_at: toApiDateTime(startedAt),
         ended_at: toApiDateTime(now),
         duration_minutes: durationMinutes,
         memo: memo.trim() || null,
       });
 
-      setSaveMessage(`実績を保存しました（${durationMinutes}分）`);
-      setTasks(await fetchTasks());
+      const comparisonMessage = savedLog.difference_minutes !== null && savedLog.difference_minutes !== undefined
+        ? ` / ${formatDifferenceMinutes(savedLog.difference_minutes)}`
+        : "";
+      setSaveMessage(`実績を保存しました（${durationMinutes}分${comparisonMessage}）`);
+      const [taskData, eventData] = await Promise.all([
+        fetchTasks(),
+        fetchCalendarEvents(),
+      ]);
+      setTasks(taskData);
+      setCalendarEvents(eventData);
     } catch (error) {
       console.error(error);
       setErrorMessage("実績保存に失敗しました。");
@@ -150,6 +204,7 @@ export default function TimerPage() {
     setElapsedBeforePauseMs(0);
     setElapsedSeconds(0);
     setMemo("");
+    setSelectedCalendarEventId("");
     setSaveMessage("");
     setErrorMessage("");
   }
@@ -176,6 +231,39 @@ export default function TimerPage() {
           borderRadius: "12px",
         }}
       >
+        <label>
+          紐づける予定
+          <select
+            value={selectedCalendarEventId}
+            onChange={(e) => handleSelectCalendarEvent(e.target.value)}
+            disabled={status === "running" || status === "paused"}
+            style={{ display: "block", width: "100%", padding: "8px" }}
+          >
+            <option value="">予定に紐づけない</option>
+            {selectableCalendarEvents.map((event) => (
+              <option key={event.id} value={event.id}>
+                {event.title} / {event.start_time.slice(0, 16).replace("T", " ")} / {event.status}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {selectedCalendarEvent && (
+          <div
+            style={{
+              padding: "12px",
+              background: "#fff9ec",
+              border: "1px solid #ffe1a8",
+              borderRadius: "10px",
+            }}
+          >
+            <strong>予定: {selectedCalendarEvent.title}</strong>
+            <div style={{ fontSize: "13px", color: "#666", marginTop: "4px" }}>
+              計画時間 {getPlannedMinutes(selectedCalendarEvent)}分 / 状態 {selectedCalendarEvent.status}
+            </div>
+          </div>
+        )}
+
         <label>
           作業タスク
           <select

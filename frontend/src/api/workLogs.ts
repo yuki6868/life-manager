@@ -8,6 +8,10 @@ export type WorkLog = {
   ended_at: string;
   duration_minutes: number;
   memo?: string | null;
+  planned_minutes?: number | null;
+  actual_minutes?: number | null;
+  difference_minutes?: number | null;
+  calendar_event_status?: string | null;
 };
 
 export type WorkLogInput = {
@@ -17,6 +21,10 @@ export type WorkLogInput = {
   ended_at: string;
   duration_minutes?: number;
   memo?: string | null;
+  planned_minutes?: number | null;
+  actual_minutes?: number | null;
+  difference_minutes?: number | null;
+  calendar_event_status?: string | null;
 };
 
 export async function createWorkLog(input: WorkLogInput): Promise<WorkLog> {

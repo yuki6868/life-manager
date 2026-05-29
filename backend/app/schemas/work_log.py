@@ -20,6 +20,10 @@ class WorkLogResponse(BaseModel):
     ended_at: datetime
     duration_minutes: int
     memo: str | None
+    planned_minutes: int | None = None
+    actual_minutes: int | None = None
+    difference_minutes: int | None = None
+    calendar_event_status: str | None = None
 
     class Config:
         from_attributes = True
