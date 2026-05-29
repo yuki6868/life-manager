@@ -10,6 +10,7 @@ from app.db.init_db import create_initial_user
 
 import app.models
 from app.api.goals import router as goal_router
+from app.api.projects import router as project_router
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(goal_router)
+app.include_router(project_router)
 
 
 @app.get("/health")

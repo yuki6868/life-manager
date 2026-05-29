@@ -1,18 +1,18 @@
 from datetime import datetime
 
-from sqlalchemy import String, Text, ForeignKey, DateTime
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 
-class Goal(Base):
-    __tablename__ = "goals"
+class Project(Base):
+    __tablename__ = "projects"
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"),
+    goal_id: Mapped[int] = mapped_column(
+        ForeignKey("goals.id"),
         nullable=False,
     )
 
@@ -26,14 +26,12 @@ class Goal(Base):
         nullable=True,
     )
 
+    estimated_minutes: Mapped[int] = mapped_column(default=0)
+    actual_minutes: Mapped[int] = mapped_column(default=0)
+
     status: Mapped[str] = mapped_column(
         String(20),
         default="active",
-    )
-
-    target_date: Mapped[datetime | None] = mapped_column(
-        DateTime,
-        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -47,8 +45,7 @@ class Goal(Base):
         onupdate=datetime.utcnow,
     )
 
-    projects = relationship(
-        "Project",
-        back_populates="goal",
-        cascade="all, delete-orphan",
+    goal = relationship(
+        "Goal",
+        back_populates="projects",
     )

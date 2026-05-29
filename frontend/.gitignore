@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# SQLite
+*.db
+
+# life manager
+life_manager.db
