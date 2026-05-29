@@ -1,5 +1,6 @@
 import CalendarPage from "./pages/CalendarPage";
 import DashboardPage from "./pages/DashboardPage";
+import GapTasksPage from "./pages/GapTasksPage";
 import GoalsPage from "./pages/GoalsPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ReflectionsPage from "./pages/ReflectionsPage";
@@ -25,6 +26,8 @@ function App() {
       <WorkLogsPage />
       <hr />
       <ReflectionsPage />
+      <hr />
+      <GapTasksPage />
     </>
   );
 }
