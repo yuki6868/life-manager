@@ -9,6 +9,7 @@ from app.db.session import engine, AsyncSessionLocal
 from app.db.init_db import create_initial_user
 
 import app.models
+from app.api.goals import router as goal_router
 
 
 @asynccontextmanager
@@ -34,6 +35,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(goal_router)
 
 
 @app.get("/health")
