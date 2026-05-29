@@ -1,3 +1,5 @@
+from datetime import date, datetime, time, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,7 @@ from app.schemas.calendar_event import (
     CalendarEventResponse,
     CalendarEventUpdate,
     FrequentTaskResponse,
+    ReusableCalendarTaskResponse,
 )
 
 router = APIRouter(
@@ -21,6 +24,18 @@ router = APIRouter(
 def calculate_event_minutes(event: CalendarEvent) -> int:
     duration = event.end_time - event.start_time
     return max(15, int(duration.total_seconds() // 60))
+
+
+def to_reusable_calendar_task(event: CalendarEvent) -> ReusableCalendarTaskResponse:
+    return ReusableCalendarTaskResponse(
+        source_event_id=event.id,
+        task_id=event.task_id,
+        title=event.title,
+        description=event.description,
+        start_time=event.start_time,
+        end_time=event.end_time,
+        estimated_minutes=calculate_event_minutes(event),
+    )
 
 
 @router.get("/", response_model=list[CalendarEventResponse])
@@ -90,6 +105,59 @@ async def get_frequent_tasks(
         )
 
     return frequent_tasks
+
+
+@router.get("/yesterday-tasks", response_model=list[ReusableCalendarTaskResponse])
+async def get_yesterday_tasks(db: AsyncSession = Depends(get_db)):
+    """昨日の予定を、今日へ再利用しやすい形で返す。"""
+    yesterday = date.today() - timedelta(days=1)
+    start_at = datetime.combine(yesterday, time.min)
+    end_at = datetime.combine(yesterday + timedelta(days=1), time.min)
+
+    result = await db.execute(
+        select(CalendarEvent)
+        .where(CalendarEvent.status != "cancelled")
+        .where(CalendarEvent.start_time >= start_at)
+        .where(CalendarEvent.start_time < end_at)
+        .order_by(CalendarEvent.start_time.asc())
+    )
+
+    return [to_reusable_calendar_task(event) for event in result.scalars().all()]
+
+
+@router.get("/recent-tasks", response_model=list[ReusableCalendarTaskResponse])
+async def get_recent_tasks(
+    limit: int = Query(default=10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """最近予定に入れたタスクを、新しい順で返す。
+
+    同じタスクIDがある場合は最新の1件だけにする。
+    タスクIDがない予定は、タイトル単位で重複を避ける。
+    """
+    result = await db.execute(
+        select(CalendarEvent)
+        .where(CalendarEvent.status != "cancelled")
+        .order_by(CalendarEvent.start_time.desc())
+        .limit(limit * 3)
+    )
+
+    events = result.scalars().all()
+    reusable_tasks: list[ReusableCalendarTaskResponse] = []
+    seen_keys: set[str] = set()
+
+    for event in events:
+        key = f"task:{event.task_id}" if event.task_id is not None else f"title:{event.title}"
+        if key in seen_keys:
+            continue
+
+        seen_keys.add(key)
+        reusable_tasks.append(to_reusable_calendar_task(event))
+
+        if len(reusable_tasks) >= limit:
+            break
+
+    return reusable_tasks
 
 
 @router.get("/{event_id}", response_model=CalendarEventResponse)

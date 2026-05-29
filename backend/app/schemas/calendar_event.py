@@ -39,3 +39,13 @@ class FrequentTaskResponse(BaseModel):
     description: str | None = None
     estimated_minutes: int
     usage_count: int
+
+class ReusableCalendarTaskResponse(BaseModel):
+    source_event_id: int
+    task_id: int | None
+    title: str
+    description: str | None = None
+    start_time: datetime
+    end_time: datetime
+    estimated_minutes: int
+

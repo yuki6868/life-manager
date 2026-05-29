@@ -4,9 +4,15 @@ import {
   deleteCalendarEvent,
   fetchCalendarEvents,
   fetchFrequentTasks,
+  fetchRecentTasks,
+  fetchYesterdayTasks,
   updateCalendarEvent,
 } from "../api/calendarEvents";
-import type { CalendarEvent, FrequentTask } from "../api/calendarEvents";
+import type {
+  CalendarEvent,
+  FrequentTask,
+  ReusableCalendarTask,
+} from "../api/calendarEvents";
 import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
 
@@ -39,9 +45,20 @@ function isSameDate(dateText: string, selectedDate: string) {
   return dateText.slice(0, 10) === selectedDate;
 }
 
+
+function applyDateToTime(dateText: string, timeSource: string) {
+  const source = new Date(timeSource);
+  const hours = String(source.getHours()).padStart(2, "0");
+  const minutes = String(source.getMinutes()).padStart(2, "0");
+
+  return `${dateText}T${hours}:${minutes}`;
+}
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [frequentTasks, setFrequentTasks] = useState<FrequentTask[]>([]);
+  const [yesterdayTasks, setYesterdayTasks] = useState<ReusableCalendarTask[]>([]);
+  const [recentTasks, setRecentTasks] = useState<ReusableCalendarTask[]>([]);
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()));
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
@@ -62,15 +79,19 @@ export default function CalendarPage() {
   const [selectedTaskId, setSelectedTaskId] = useState("");
 
   async function loadData() {
-    const [eventData, taskData, frequentTaskData] = await Promise.all([
+    const [eventData, taskData, frequentTaskData, yesterdayTaskData, recentTaskData] = await Promise.all([
       fetchCalendarEvents(),
       fetchTasks(),
       fetchFrequentTasks(),
+      fetchYesterdayTasks(),
+      fetchRecentTasks(),
     ]);
 
     setEvents(eventData);
     setTasks(taskData);
     setFrequentTasks(frequentTaskData);
+    setYesterdayTasks(yesterdayTaskData);
+    setRecentTasks(recentTaskData);
   }
 
   useEffect(() => {
@@ -146,6 +167,22 @@ export default function CalendarPage() {
     });
 
     resetForm();
+    await loadData();
+  }
+
+
+  async function handleCopyReusableTask(task: ReusableCalendarTask) {
+    const copiedStartTime = applyDateToTime(selectedDate, task.start_time);
+    const copiedEndTime = applyDateToTime(selectedDate, task.end_time);
+
+    await createCalendarEvent({
+      task_id: task.task_id ?? null,
+      title: task.title,
+      description: task.description ?? "",
+      start_time: copiedStartTime,
+      end_time: copiedEndTime,
+    });
+
     await loadData();
   }
 
@@ -324,6 +361,101 @@ export default function CalendarPage() {
 
                 <button type="button" onClick={() => handleAddFrequentTask(task)}>
                   予定に追加
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+
+      <section
+        style={{
+          maxWidth: "760px",
+          marginBottom: "32px",
+          padding: "16px",
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+        }}
+      >
+        <h2>昨日やったタスク</h2>
+        <p style={{ color: "#666", marginTop: 0 }}>
+          昨日の予定を、時刻はそのままで表示日にコピーできます。
+        </p>
+
+        {yesterdayTasks.length === 0 ? (
+          <p>昨日の予定はまだありません。</p>
+        ) : (
+          <div style={{ display: "grid", gap: "8px" }}>
+            {yesterdayTasks.map((task) => (
+              <div
+                key={task.source_event_id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "10px 12px",
+                  border: "1px solid #eee",
+                  borderRadius: "10px",
+                }}
+              >
+                <div>
+                  <strong>{task.title}</strong>
+                  <div style={{ fontSize: "13px", color: "#666" }}>
+                    {task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分
+                  </div>
+                </div>
+
+                <button type="button" onClick={() => handleCopyReusableTask(task)}>
+                  表示日にコピー
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section
+        style={{
+          maxWidth: "760px",
+          marginBottom: "32px",
+          padding: "16px",
+          border: "1px solid #ddd",
+          borderRadius: "12px",
+        }}
+      >
+        <h2>最近やったタスク</h2>
+        <p style={{ color: "#666", marginTop: 0 }}>
+          最近予定に入れたタスクを重複なしで表示します。
+        </p>
+
+        {recentTasks.length === 0 ? (
+          <p>最近の予定はまだありません。</p>
+        ) : (
+          <div style={{ display: "grid", gap: "8px" }}>
+            {recentTasks.map((task) => (
+              <div
+                key={task.source_event_id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "10px 12px",
+                  border: "1px solid #eee",
+                  borderRadius: "10px",
+                }}
+              >
+                <div>
+                  <strong>{task.title}</strong>
+                  <div style={{ fontSize: "13px", color: "#666" }}>
+                    元の時刻 {task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分
+                  </div>
+                </div>
+
+                <button type="button" onClick={() => handleCopyReusableTask(task)}>
+                  表示日にコピー
                 </button>
               </div>
             ))}
