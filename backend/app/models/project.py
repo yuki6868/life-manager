@@ -55,3 +55,10 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+
+    completion_reflection = relationship(
+        "ProjectReflection",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )

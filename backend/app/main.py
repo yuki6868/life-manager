@@ -17,6 +17,7 @@ from app.api.recurrence_rules import router as recurrence_rule_router
 from app.api.work_logs import router as work_log_router
 from app.api.dashboard import router as dashboard_router
 from app.api.reflections import router as reflection_router
+from app.api.project_reflections import router as project_reflection_router
 
 
 @asynccontextmanager
@@ -51,6 +52,7 @@ app.include_router(recurrence_rule_router)
 app.include_router(work_log_router)
 app.include_router(dashboard_router)
 app.include_router(reflection_router)
+app.include_router(project_reflection_router)
 
 
 @app.get("/health")
