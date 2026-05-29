@@ -18,6 +18,7 @@ from app.api.work_logs import router as work_log_router
 from app.api.dashboard import router as dashboard_router
 from app.api.reflections import router as reflection_router
 from app.api.project_reflections import router as project_reflection_router
+from app.api.estimations import router as estimation_router
 
 
 @asynccontextmanager
@@ -53,6 +54,7 @@ app.include_router(work_log_router)
 app.include_router(dashboard_router)
 app.include_router(reflection_router)
 app.include_router(project_reflection_router)
+app.include_router(estimation_router)
 
 
 @app.get("/health")
