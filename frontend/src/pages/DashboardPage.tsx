@@ -3,6 +3,8 @@ import { fetchCalendarEvents } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 import { fetchTodaySummary } from "../api/dashboard";
 import type { TodaySummary } from "../api/dashboard";
+import { fetchEstimationAccuracySummary } from "../api/estimations";
+import type { EstimationAccuracySummary } from "../api/estimations";
 import { fetchProjects } from "../api/projects";
 import type { Project } from "../api/projects";
 import { fetchTasks } from "../api/tasks";
@@ -45,7 +47,10 @@ function isInProgressTask(task: Task) {
 
 function getProjectProgressRate(project: Project) {
   if (project.estimated_minutes <= 0) return 0;
-  return Math.min(100, Math.round((project.actual_minutes / project.estimated_minutes) * 100));
+  return Math.min(
+    100,
+    Math.round((project.actual_minutes / project.estimated_minutes) * 100),
+  );
 }
 
 function getRemainingMinutes(project: Project) {
@@ -70,11 +75,29 @@ function statusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+function priorityLabel(priority: string) {
+  const labels: Record<string, string> = {
+    high: "高優先度",
+    medium: "中優先度",
+    low: "低優先度",
+  };
+
+  return labels[priority] ?? priority;
+}
+
+function formatSignedMinutes(minutes: number) {
+  if (minutes > 0) return `+${formatMinutes(minutes)}`;
+  if (minutes < 0) return `-${formatMinutes(Math.abs(minutes))}`;
+  return "差分なし";
+}
+
 export default function DashboardPage() {
   const [summary, setSummary] = useState<TodaySummary | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [estimationAccuracy, setEstimationAccuracy] =
+    useState<EstimationAccuracySummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -83,17 +106,20 @@ export default function DashboardPage() {
     setErrorMessage("");
 
     try {
-      const [summaryData, eventData, projectData, taskData] = await Promise.all([
-        fetchTodaySummary(),
-        fetchCalendarEvents(),
-        fetchProjects(),
-        fetchTasks(),
-      ]);
+      const [summaryData, eventData, projectData, taskData, accuracyData] =
+        await Promise.all([
+          fetchTodaySummary(),
+          fetchCalendarEvents(),
+          fetchProjects(),
+          fetchTasks(),
+          fetchEstimationAccuracySummary(),
+        ]);
 
       setSummary(summaryData);
       setCalendarEvents(eventData);
       setProjects(projectData);
       setTasks(taskData);
+      setEstimationAccuracy(accuracyData);
     } catch (error) {
       console.error(error);
       setErrorMessage("ダッシュボードの取得に失敗しました。");
@@ -114,7 +140,7 @@ export default function DashboardPage() {
       .filter((event) => event.start_time.slice(0, 10) === todayKey)
       .sort(
         (a, b) =>
-          new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+          new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
       );
   }, [calendarEvents, todayKey]);
 
@@ -136,14 +162,25 @@ export default function DashboardPage() {
 
   return (
     <section style={{ padding: "32px", borderTop: "1px solid #ddd" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "16px",
+        }}
+      >
         <div>
           <h1>ダッシュボード</h1>
           <p style={{ color: "#666" }}>
             今日の予定、実績、進行中タスク、未完了予定をまとめて確認します。
           </p>
         </div>
-        <button type="button" onClick={loadData} disabled={isLoading} style={{ height: "40px" }}>
+        <button
+          type="button"
+          onClick={loadData}
+          disabled={isLoading}
+          style={{ height: "40px" }}
+        >
           再読み込み
         </button>
       </div>
@@ -177,6 +214,10 @@ export default function DashboardPage() {
               label="未完了予定"
               value={`${summary?.incomplete_events_count ?? incompleteEvents.length}件`}
             />
+            <SummaryCard
+              label="過小見積率"
+              value={`${estimationAccuracy?.underestimation_rate ?? 0}%`}
+            />
           </div>
 
           <div
@@ -195,69 +236,159 @@ export default function DashboardPage() {
                     <div key={event.id} style={itemStyle}>
                       <strong>{event.title}</strong>
                       <p style={mutedTextStyle}>
-                        {formatTime(event.start_time)} - {formatTime(event.end_time)} / {formatMinutes(getEventMinutes(event))}
+                        {formatTime(event.start_time)} -{" "}
+                        {formatTime(event.end_time)} /{" "}
+                        {formatMinutes(getEventMinutes(event))}
                       </p>
-                      <p style={mutedTextStyle}>状態: {statusLabel(event.status)}</p>
+                      <p style={mutedTextStyle}>
+                        状態: {statusLabel(event.status)}
+                      </p>
                     </div>
                   ))}
                 </div>
               )}
             </DashboardPanel>
 
+            <DashboardPanel title="プロジェクト進捗">
+              {progressProjects.length === 0 ? (
+                <p>表示できるプロジェクトはありません。</p>
+              ) : (
+                <div style={{ display: "grid", gap: "12px" }}>
+                  {progressProjects.map((project) => {
+                    const progressRate = getProjectProgressRate(project);
+                    const remainingMinutes = getRemainingMinutes(project);
 
-          <DashboardPanel title="プロジェクト進捗">
-            {progressProjects.length === 0 ? (
-              <p>表示できるプロジェクトはありません。</p>
-            ) : (
-              <div style={{ display: "grid", gap: "12px" }}>
-                {progressProjects.map((project) => {
-                  const progressRate = getProjectProgressRate(project);
-                  const remainingMinutes = getRemainingMinutes(project);
-
-                  return (
-                    <div key={project.id} style={itemStyle}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: "12px",
-                        }}
-                      >
-                        <strong>{project.title}</strong>
-                        <span style={{ color: "#2563eb", fontWeight: 700 }}>
-                          {progressRate}%
-                        </span>
-                      </div>
-
-                      <div
-                        aria-label={`${project.title}の進捗率 ${progressRate}%`}
-                        style={{
-                          height: "10px",
-                          background: "#e5e7eb",
-                          borderRadius: "999px",
-                          overflow: "hidden",
-                          marginTop: "10px",
-                        }}
-                      >
+                    return (
+                      <div key={project.id} style={itemStyle}>
                         <div
                           style={{
-                            width: `${progressRate}%`,
-                            height: "100%",
-                            background: "#2563eb",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: "12px",
                           }}
-                        />
-                      </div>
+                        >
+                          <strong>{project.title}</strong>
+                          <span style={{ color: "#2563eb", fontWeight: 700 }}>
+                            {progressRate}%
+                          </span>
+                        </div>
 
+                        <div
+                          aria-label={`${project.title}の進捗率 ${progressRate}%`}
+                          style={{
+                            height: "10px",
+                            background: "#e5e7eb",
+                            borderRadius: "999px",
+                            overflow: "hidden",
+                            marginTop: "10px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${progressRate}%`,
+                              height: "100%",
+                              background: "#2563eb",
+                            }}
+                          />
+                        </div>
+
+                        <p style={mutedTextStyle}>
+                          予想 {formatMinutes(project.estimated_minutes)} / 実績{" "}
+                          {formatMinutes(project.actual_minutes)} / 残り{" "}
+                          {formatMinutes(remainingMinutes)}
+                        </p>
+                        <p style={mutedTextStyle}>
+                          状態: {statusLabel(project.status)}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="見積もり精度">
+              {!estimationAccuracy ||
+              estimationAccuracy.total_task_count === 0 ? (
+                <p>実績があるタスクがまだありません。</p>
+              ) : (
+                <div style={{ display: "grid", gap: "14px" }}>
+                  <div style={itemStyle}>
+                    <strong>予定時間と実績時間の差分</strong>
+                    <p style={mutedTextStyle}>
+                      平均予定{" "}
+                      {formatMinutes(
+                        estimationAccuracy.average_estimated_minutes,
+                      )}{" "}
+                      / 平均実績{" "}
+                      {formatMinutes(estimationAccuracy.average_actual_minutes)}{" "}
+                      / 差分{" "}
+                      {formatSignedMinutes(
+                        estimationAccuracy.average_difference_minutes,
+                      )}
+                    </p>
+                    <p style={mutedTextStyle}>
+                      過小見積率: {estimationAccuracy.underestimation_rate}
+                      %（対象 {estimationAccuracy.total_task_count}件）
+                    </p>
+                  </div>
+
+                  <div style={itemStyle}>
+                    <strong>タスク種別ごとの傾向</strong>
+                    {estimationAccuracy.task_type_trends.length === 0 ? (
                       <p style={mutedTextStyle}>
-                        予想 {formatMinutes(project.estimated_minutes)} / 実績 {formatMinutes(project.actual_minutes)} / 残り {formatMinutes(remainingMinutes)}
+                        傾向を表示できるデータがありません。
                       </p>
-                      <p style={mutedTextStyle}>状態: {statusLabel(project.status)}</p>
+                    ) : (
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: "8px",
+                          marginTop: "8px",
+                        }}
+                      >
+                        {estimationAccuracy.task_type_trends.map((trend) => (
+                          <div key={trend.task_type}>
+                            <p style={{ margin: 0 }}>
+                              {priorityLabel(trend.task_type)}: 過小見積率{" "}
+                              {trend.underestimation_rate}% / 平均差分{" "}
+                              {formatSignedMinutes(
+                                trend.average_difference_minutes,
+                              )}
+                            </p>
+                            <p style={mutedTextStyle}>
+                              {trend.task_count}件 / 平均予定{" "}
+                              {formatMinutes(trend.average_estimated_minutes)} /
+                              平均実績{" "}
+                              {formatMinutes(trend.average_actual_minutes)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={itemStyle}>
+                    <strong>最近の見積もり差分</strong>
+                    <div
+                      style={{ display: "grid", gap: "8px", marginTop: "8px" }}
+                    >
+                      {estimationAccuracy.recent_tasks.map((task) => (
+                        <div key={task.id}>
+                          <p style={{ margin: 0 }}>{task.title}</p>
+                          <p style={mutedTextStyle}>
+                            {task.project_title} / 予定{" "}
+                            {formatMinutes(task.estimated_minutes)} / 実績{" "}
+                            {formatMinutes(task.actual_minutes)} / 差分{" "}
+                            {formatSignedMinutes(task.difference_minutes)}
+                          </p>
+                        </div>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </DashboardPanel>
+                  </div>
+                </div>
+              )}
+            </DashboardPanel>
 
             <DashboardPanel title="進行中タスク">
               {inProgressTasks.length === 0 ? (
@@ -268,10 +399,12 @@ export default function DashboardPage() {
                     <div key={task.id} style={itemStyle}>
                       <strong>{task.title}</strong>
                       <p style={mutedTextStyle}>
-                        実績 {formatMinutes(task.actual_minutes)} / 見積 {formatMinutes(task.estimated_minutes)}
+                        実績 {formatMinutes(task.actual_minutes)} / 見積{" "}
+                        {formatMinutes(task.estimated_minutes)}
                       </p>
                       <p style={mutedTextStyle}>
-                        優先度: {task.priority} / エネルギー: {task.energy_level}
+                        優先度: {task.priority} / エネルギー:{" "}
+                        {task.energy_level}
                       </p>
                     </div>
                   ))}
@@ -288,9 +421,12 @@ export default function DashboardPage() {
                     <div key={event.id} style={itemStyle}>
                       <strong>{event.title}</strong>
                       <p style={mutedTextStyle}>
-                        {formatTime(event.start_time)} - {formatTime(event.end_time)}
+                        {formatTime(event.start_time)} -{" "}
+                        {formatTime(event.end_time)}
                       </p>
-                      <p style={mutedTextStyle}>状態: {statusLabel(event.status)}</p>
+                      <p style={mutedTextStyle}>
+                        状態: {statusLabel(event.status)}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -313,13 +449,21 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
         background: "#fff",
       }}
     >
-      <p style={{ margin: "0 0 8px", color: "#666", fontSize: "14px" }}>{label}</p>
+      <p style={{ margin: "0 0 8px", color: "#666", fontSize: "14px" }}>
+        {label}
+      </p>
       <strong style={{ fontSize: "24px" }}>{value}</strong>
     </div>
   );
 }
 
-function DashboardPanel({ children, title }: { children: React.ReactNode; title: string }) {
+function DashboardPanel({
+  children,
+  title,
+}: {
+  children: React.ReactNode;
+  title: string;
+}) {
   return (
     <section
       style={{
