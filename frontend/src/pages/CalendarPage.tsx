@@ -6,6 +6,8 @@ import {
   updateCalendarEvent,
 } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
+import { fetchTasks } from "../api/tasks";
+import type { Task } from "../api/tasks";
 
 const START_HOUR = 5;
 const END_HOUR = 24;
@@ -54,13 +56,21 @@ export default function CalendarPage() {
     return toDateTimeLocalValue(now);
   });
 
-  async function loadEvents() {
-    const data = await fetchCalendarEvents();
-    setEvents(data);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+
+  async function loadData() {
+    const [eventData, taskData] = await Promise.all([
+        fetchCalendarEvents(),
+        fetchTasks(),
+    ]);
+
+    setEvents(eventData);
+    setTasks(taskData);
   }
 
   useEffect(() => {
-    loadEvents();
+    loadData();
   }, []);
 
   const dayEvents = useMemo(() => {
@@ -75,6 +85,7 @@ export default function CalendarPage() {
   function resetForm() {
     setTitle("");
     setDescription("");
+    setSelectedTaskId("");
 
     const start = new Date(`${selectedDate}T09:00`);
     const end = new Date(`${selectedDate}T10:00`);
@@ -94,7 +105,22 @@ export default function CalendarPage() {
 
     async function handleDelete(id: number) {
     await deleteCalendarEvent(id);
-    await loadEvents();
+    await loadData();
+  }
+
+  function handleSelectTask(taskId: string) {
+    setSelectedTaskId(taskId);
+
+    const task = tasks.find((item) => item.id === Number(taskId));
+    if (!task) return;
+
+    setTitle(task.title);
+    setDescription(task.description ?? "");
+
+    const start = new Date(startTime);
+    const end = new Date(start.getTime() + task.estimated_minutes * 60000);
+
+    setEndTime(toDateTimeLocalValue(end));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -103,10 +129,11 @@ export default function CalendarPage() {
     if (!title.trim()) return;
 
     const input = {
-        title,
-        description,
-        start_time: startTime,
-        end_time: endTime,
+    task_id: selectedTaskId ? Number(selectedTaskId) : null,
+    title,
+    description,
+    start_time: startTime,
+    end_time: endTime,
     };
 
     if (editingEvent) {
@@ -120,7 +147,7 @@ export default function CalendarPage() {
     }
 
     resetForm();
-    await loadEvents();
+    await loadData();
   }
 
   const hours = Array.from(
@@ -156,6 +183,22 @@ export default function CalendarPage() {
       >
         <h2>予定追加</h2>
 
+        <label>
+        タスクから予定化
+        <select
+            value={selectedTaskId}
+            onChange={(e) => handleSelectTask(e.target.value)}
+            style={{ display: "block", padding: "8px", width: "100%" }}
+        >
+            <option value="">タスクを選択しない</option>
+            {tasks.map((task) => (
+            <option key={task.id} value={task.id}>
+                {task.title}（{task.estimated_minutes}分）
+            </option>
+            ))}
+        </select>
+        </label>
+
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -172,12 +215,27 @@ export default function CalendarPage() {
 
         <label>
           開始
-          <input
+            <input
             type="datetime-local"
             value={startTime}
-            onChange={(e) => setStartTime(e.target.value)}
+            onChange={(e) => {
+                const nextStartTime = e.target.value;
+                setStartTime(nextStartTime);
+
+                const task = tasks.find(
+                (item) => item.id === Number(selectedTaskId)
+                );
+
+                if (task) {
+                const start = new Date(nextStartTime);
+                const end = new Date(
+                    start.getTime() + task.estimated_minutes * 60000
+                );
+                setEndTime(toDateTimeLocalValue(end));
+                }
+            }}
             style={{ display: "block", padding: "8px", width: "100%" }}
-          />
+            />
         </label>
 
         <label>
