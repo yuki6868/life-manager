@@ -5,12 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.goal import Goal
 from app.models.project import Project
-from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
+from app.schemas.project import ProjectCreate, ProjectResponse, ProjectStatusUpdate, ProjectUpdate
 
 router = APIRouter(
     prefix="/projects",
     tags=["Projects"],
 )
+
+PROJECT_STATUSES = {"active", "completed", "paused", "cancelled"}
 
 
 @router.get("/", response_model=list[ProjectResponse])
@@ -88,6 +90,31 @@ async def update_project(
     project.description = payload.description
     project.estimated_minutes = payload.estimated_minutes
     project.actual_minutes = payload.actual_minutes
+    project.status = payload.status
+
+    await db.commit()
+    await db.refresh(project)
+
+    return project
+
+
+@router.patch("/{project_id}/status", response_model=ProjectResponse)
+async def update_project_status(
+    project_id: int,
+    payload: ProjectStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    if payload.status not in PROJECT_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid project status")
+
+    result = await db.execute(
+        select(Project).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     project.status = payload.status
 
     await db.commit()

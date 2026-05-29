@@ -5,12 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.project import Project
 from app.models.task import Task
-from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
+from app.schemas.task import TaskCreate, TaskResponse, TaskStatusUpdate, TaskUpdate
 
 router = APIRouter(
     prefix="/tasks",
     tags=["Tasks"],
 )
+
+TASK_STATUSES = {"todo", "in_progress", "completed", "paused", "cancelled"}
 
 
 @router.get("/", response_model=list[TaskResponse])
@@ -92,6 +94,31 @@ async def update_task(
     task.estimated_minutes = payload.estimated_minutes
     task.actual_minutes = payload.actual_minutes
     task.energy_level = payload.energy_level
+    task.status = payload.status
+
+    await db.commit()
+    await db.refresh(task)
+
+    return task
+
+
+@router.patch("/{task_id}/status", response_model=TaskResponse)
+async def update_task_status(
+    task_id: int,
+    payload: TaskStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    if payload.status not in TASK_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid task status")
+
+    result = await db.execute(
+        select(Task).where(Task.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
     task.status = payload.status
 
     await db.commit()

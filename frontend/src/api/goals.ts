@@ -33,3 +33,7 @@ export async function updateGoal(id: number, input: GoalInput & { status: string
 export async function deleteGoal(id: number): Promise<void> {
   await apiClient.delete(`/goals/${id}`);
 }
+export async function updateGoalStatus(id: number, status: string): Promise<Goal> {
+  const res = await apiClient.patch(`/goals/${id}/status`, { status });
+  return res.data;
+}

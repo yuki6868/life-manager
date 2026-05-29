@@ -4,6 +4,7 @@ import {
   deleteProject,
   fetchProjects,
   updateProject,
+  updateProjectStatus,
 } from "../api/projects";
 import { fetchGoals } from "../api/goals";
 import {
@@ -96,6 +97,16 @@ export default function ProjectsPage() {
     setDescription(project.description ?? "");
     setEstimatedMinutes(String(project.estimated_minutes));
     setProjectStatus(project.status);
+  }
+
+  async function handleStatusChange(project: Project, status: string) {
+    await updateProjectStatus(project.id, status);
+
+    if (status === "completed") {
+      openCompletionReflection({ ...project, status });
+    }
+
+    await loadData();
   }
 
   async function handleDelete(id: number) {
@@ -232,6 +243,7 @@ export default function ProjectsPage() {
                 <option value="active">進行中</option>
                 <option value="completed">完了</option>
                 <option value="paused">保留</option>
+                <option value="cancelled">中止</option>
               </select>
             </div>
           )}
@@ -271,9 +283,15 @@ export default function ProjectsPage() {
               <h3>{project.title}</h3>
               <p>{project.description || "説明なし"}</p>
               <p>目標: {getGoalTitle(project.goal_id)}</p>
-              <p>状態: {project.status}</p>
+              <p>状態: {getProjectStatusLabel(project.status)}</p>
               <p>予定工数: {project.estimated_minutes}分</p>
               <p>実績工数: {project.actual_minutes}分</p>
+
+              <StatusActionButtons
+                currentStatus={project.status}
+                options={PROJECT_STATUS_OPTIONS}
+                onChange={(status) => handleStatusChange(project, status)}
+              />
 
               <ProjectCompletionReflectionCard
                 actualMinutes={project.actual_minutes}
@@ -466,6 +484,43 @@ function ProjectCompletionReflectionCard({
       <button type="button" onClick={onDelete} style={{ marginLeft: "8px" }}>
         振り返りを削除
       </button>
+    </div>
+  );
+}
+
+
+const PROJECT_STATUS_OPTIONS = [
+  { value: "active", label: "進行中" },
+  { value: "completed", label: "完了" },
+  { value: "paused", label: "保留" },
+  { value: "cancelled", label: "中止" },
+];
+
+function getProjectStatusLabel(status: string) {
+  return PROJECT_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}
+
+function StatusActionButtons({
+  currentStatus,
+  onChange,
+  options,
+}: {
+  currentStatus: string;
+  onChange: (status: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          disabled={option.value === currentStatus}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   deleteTask,
   fetchTasks,
   updateTask,
+  updateTaskStatus,
 } from "../api/tasks";
 import { fetchProjects } from "../api/projects";
 import type { Task } from "../api/tasks";
@@ -19,6 +20,7 @@ export default function TasksPage() {
   const [priority, setPriority] = useState("medium");
   const [estimatedMinutes, setEstimatedMinutes] = useState("0");
   const [energyLevel, setEnergyLevel] = useState("medium");
+  const [taskStatus, setTaskStatus] = useState("todo");
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   async function loadData() {
@@ -57,7 +59,7 @@ export default function TasksPage() {
       await updateTask(editingTask.id, {
         ...input,
         actual_minutes: editingTask.actual_minutes,
-        status: editingTask.status,
+        status: taskStatus,
       });
     } else {
       await createTask(input);
@@ -73,6 +75,7 @@ export default function TasksPage() {
     setPriority("medium");
     setEstimatedMinutes("0");
     setEnergyLevel("medium");
+    setTaskStatus("todo");
     setEditingTask(null);
 
     if (projects.length > 0) {
@@ -88,6 +91,12 @@ export default function TasksPage() {
     setPriority(task.priority);
     setEstimatedMinutes(String(task.estimated_minutes));
     setEnergyLevel(task.energy_level);
+    setTaskStatus(task.status);
+  }
+
+  async function handleStatusChange(task: Task, status: string) {
+    await updateTaskStatus(task.id, status);
+    await loadData();
   }
 
   async function handleDelete(id: number) {
@@ -185,6 +194,24 @@ export default function TasksPage() {
             </select>
           </div>
 
+          {editingTask && (
+            <div style={{ marginTop: "12px" }}>
+              <label>状態</label>
+              <br />
+              <select
+                value={taskStatus}
+                onChange={(e) => setTaskStatus(e.target.value)}
+                style={{ width: "420px", padding: "8px" }}
+              >
+                <option value="todo">未着手</option>
+                <option value="in_progress">進行中</option>
+                <option value="completed">完了</option>
+                <option value="paused">保留</option>
+                <option value="cancelled">中止</option>
+              </select>
+            </div>
+          )}
+
           <button type="submit" style={{ marginTop: "16px" }}>
             {editingTask ? "更新する" : "作成する"}
           </button>
@@ -224,7 +251,13 @@ export default function TasksPage() {
               <p>予定工数: {task.estimated_minutes}分</p>
               <p>実績工数: {task.actual_minutes}分</p>
               <p>エネルギー: {task.energy_level}</p>
-              <p>状態: {task.status}</p>
+              <p>状態: {getTaskStatusLabel(task.status)}</p>
+
+              <StatusActionButtons
+                currentStatus={task.status}
+                options={TASK_STATUS_OPTIONS}
+                onChange={(status) => handleStatusChange(task, status)}
+              />
 
               <button onClick={() => handleEdit(task)}>編集</button>
               <button
@@ -237,6 +270,43 @@ export default function TasksPage() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const TASK_STATUS_OPTIONS = [
+  { value: "todo", label: "未着手" },
+  { value: "in_progress", label: "進行中" },
+  { value: "completed", label: "完了" },
+  { value: "paused", label: "保留" },
+  { value: "cancelled", label: "中止" },
+];
+
+function getTaskStatusLabel(status: string) {
+  return TASK_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}
+
+function StatusActionButtons({
+  currentStatus,
+  onChange,
+  options,
+}: {
+  currentStatus: string;
+  onChange: (status: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          disabled={option.value === currentStatus}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }

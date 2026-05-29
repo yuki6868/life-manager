@@ -41,3 +41,7 @@ export async function updateTask(id: number, input: Required<TaskInput>): Promis
 export async function deleteTask(id: number): Promise<void> {
   await apiClient.delete(`/tasks/${id}`);
 }
+export async function updateTaskStatus(id: number, status: string): Promise<Task> {
+  const res = await apiClient.patch(`/tasks/${id}/status`, { status });
+  return res.data;
+}

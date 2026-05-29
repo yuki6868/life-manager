@@ -16,6 +16,10 @@ class GoalUpdate(BaseModel):
     target_date: datetime | None = None
 
 
+class GoalStatusUpdate(BaseModel):
+    status: str
+
+
 class GoalResponse(BaseModel):
     id: int
     user_id: int

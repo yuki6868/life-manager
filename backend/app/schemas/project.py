@@ -17,6 +17,10 @@ class ProjectUpdate(BaseModel):
     status: str
 
 
+class ProjectStatusUpdate(BaseModel):
+    status: str
+
+
 class ProjectResponse(BaseModel):
     id: int
     goal_id: int

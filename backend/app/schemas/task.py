@@ -21,6 +21,10 @@ class TaskUpdate(BaseModel):
     status: str = "todo"
 
 
+class TaskStatusUpdate(BaseModel):
+    status: str
+
+
 class TaskResponse(BaseModel):
     id: int
     project_id: int

@@ -4,6 +4,7 @@ import {
   deleteGoal,
   fetchGoals,
   updateGoal,
+  updateGoalStatus,
 } from "../api/goals";
 import type { Goal } from "../api/goals";
 
@@ -57,6 +58,11 @@ export default function GoalsPage() {
     setTargetDate(goal.target_date ?? "");
   }
 
+  async function handleStatusChange(goal: Goal, status: string) {
+    await updateGoalStatus(goal.id, status);
+    await loadGoals();
+  }
+
   async function handleDelete(id: number) {
     await deleteGoal(id);
     await loadGoals();
@@ -100,6 +106,25 @@ export default function GoalsPage() {
           />
         </div>
 
+        {editingGoal && (
+          <div style={{ marginTop: "12px" }}>
+            <label>状態</label>
+            <br />
+            <select
+              value={editingGoal.status}
+              onChange={(e) =>
+                setEditingGoal({ ...editingGoal, status: e.target.value })
+              }
+              style={{ width: "420px", padding: "8px" }}
+            >
+              <option value="active">進行中</option>
+              <option value="completed">達成</option>
+              <option value="paused">保留</option>
+              <option value="cancelled">中止</option>
+            </select>
+          </div>
+        )}
+
         <button type="submit" style={{ marginTop: "16px" }}>
           {editingGoal ? "更新する" : "作成する"}
         </button>
@@ -138,8 +163,14 @@ export default function GoalsPage() {
             >
               <h3>{goal.title}</h3>
               <p>{goal.description || "説明なし"}</p>
-              <p>状態: {goal.status}</p>
+              <p>状態: {getGoalStatusLabel(goal.status)}</p>
               <p>期限: {goal.target_date || "未設定"}</p>
+
+              <StatusActionButtons
+                currentStatus={goal.status}
+                options={GOAL_STATUS_OPTIONS}
+                onChange={(status) => handleStatusChange(goal, status)}
+              />
 
               <button onClick={() => handleEdit(goal)}>編集</button>
               <button
@@ -152,6 +183,42 @@ export default function GoalsPage() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const GOAL_STATUS_OPTIONS = [
+  { value: "active", label: "進行中" },
+  { value: "completed", label: "達成" },
+  { value: "paused", label: "保留" },
+  { value: "cancelled", label: "中止" },
+];
+
+function getGoalStatusLabel(status: string) {
+  return GOAL_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}
+
+function StatusActionButtons({
+  currentStatus,
+  onChange,
+  options,
+}: {
+  currentStatus: string;
+  onChange: (status: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          disabled={option.value === currentStatus}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }

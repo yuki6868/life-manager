@@ -41,3 +41,7 @@ export async function updateProject(
 export async function deleteProject(id: number): Promise<void> {
   await apiClient.delete(`/projects/${id}`);
 }
+export async function updateProjectStatus(id: number, status: string): Promise<Project> {
+  const res = await apiClient.patch(`/projects/${id}/status`, { status });
+  return res.data;
+}
