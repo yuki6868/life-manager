@@ -5,6 +5,7 @@ from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
 from app.models.recurrence_rule import RecurrenceRule
 from app.models.work_log import WorkLog
+from app.models.reflection import Reflection
 
 __all__ = [
     "User",
@@ -14,4 +15,5 @@ __all__ = [
     "CalendarEvent",
     "RecurrenceRule",
     "WorkLog",
+    "Reflection",
 ]
