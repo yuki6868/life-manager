@@ -1,13 +1,20 @@
 from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.calendar_event import CalendarEvent
+from app.models.project import Project
+from app.models.task import Task
 from app.models.work_log import WorkLog
-from app.schemas.dashboard import TodaySummaryResponse
+from app.schemas.dashboard import (
+    MonthlyActualResponse,
+    ProjectTimeAllocationResponse,
+    TodaySummaryResponse,
+    WeeklyActualResponse,
+)
 
 router = APIRouter(
     prefix="/dashboard",
@@ -20,6 +27,14 @@ def get_today_range() -> tuple[datetime, datetime]:
     start_at = datetime.combine(today, time.min)
     end_at = datetime.combine(today + timedelta(days=1), time.min)
     return start_at, end_at
+
+
+def get_week_start(target_date: date) -> date:
+    return target_date - timedelta(days=target_date.weekday())
+
+
+def to_datetime_start(target_date: date) -> datetime:
+    return datetime.combine(target_date, time.min)
 
 
 @router.get("/today-summary", response_model=TodaySummaryResponse)
@@ -69,3 +84,139 @@ async def get_today_summary(db: AsyncSession = Depends(get_db)):
         achievement_rate=achievement_rate,
         incomplete_events_count=incomplete_events_count,
     )
+
+
+@router.get("/weekly-actuals", response_model=list[WeeklyActualResponse])
+async def get_weekly_actuals(
+    weeks: int = 8,
+    db: AsyncSession = Depends(get_db),
+):
+    weeks = max(1, min(weeks, 52))
+    this_week_start = get_week_start(date.today())
+    start_date = this_week_start - timedelta(weeks=weeks - 1)
+    start_at = to_datetime_start(start_date)
+
+    weekday_offset = (cast(func.strftime("%w", WorkLog.started_at), Integer) + 6) % 7
+    week_start_expr = func.date(
+        WorkLog.started_at,
+        func.printf("-%d days", weekday_offset),
+    )
+
+    result = await db.execute(
+        select(
+            week_start_expr.label("week_start"),
+            func.coalesce(func.sum(WorkLog.duration_minutes), 0).label("actual_minutes"),
+        )
+        .where(WorkLog.started_at >= start_at)
+        .group_by(week_start_expr)
+        .order_by(week_start_expr)
+    )
+
+    actual_minutes_by_week = {
+        row.week_start: int(row.actual_minutes or 0)
+        for row in result.all()
+    }
+
+    responses: list[WeeklyActualResponse] = []
+    for index in range(weeks):
+        week_start = start_date + timedelta(weeks=index)
+        week_end = week_start + timedelta(days=6)
+        week_key = week_start.isoformat()
+        responses.append(
+            WeeklyActualResponse(
+                week_start=week_key,
+                week_end=week_end.isoformat(),
+                actual_minutes=actual_minutes_by_week.get(week_key, 0),
+            )
+        )
+
+    return responses
+
+
+@router.get("/monthly-actuals", response_model=list[MonthlyActualResponse])
+async def get_monthly_actuals(
+    months: int = 6,
+    db: AsyncSession = Depends(get_db),
+):
+    months = max(1, min(months, 36))
+    today = date.today()
+    first_day_this_month = today.replace(day=1)
+
+    month_starts: list[date] = []
+    year = first_day_this_month.year
+    month = first_day_this_month.month
+    for _ in range(months):
+        month_starts.append(date(year, month, 1))
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    month_starts.reverse()
+
+    start_at = to_datetime_start(month_starts[0])
+
+    result = await db.execute(
+        select(
+            func.strftime("%Y-%m", WorkLog.started_at).label("month"),
+            func.coalesce(func.sum(WorkLog.duration_minutes), 0).label("actual_minutes"),
+        )
+        .where(WorkLog.started_at >= start_at)
+        .group_by("month")
+        .order_by("month")
+    )
+
+    actual_minutes_by_month = {
+        row.month: int(row.actual_minutes or 0)
+        for row in result.all()
+    }
+
+    return [
+        MonthlyActualResponse(
+            month=month_start.strftime("%Y-%m"),
+            actual_minutes=actual_minutes_by_month.get(month_start.strftime("%Y-%m"), 0),
+        )
+        for month_start in month_starts
+    ]
+
+
+@router.get(
+    "/project-time-allocation",
+    response_model=list[ProjectTimeAllocationResponse],
+)
+async def get_project_time_allocation(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+):
+    days = max(1, min(days, 366))
+    start_at = to_datetime_start(date.today() - timedelta(days=days - 1))
+
+    result = await db.execute(
+        select(
+            Project.id.label("project_id"),
+            Project.title.label("project_title"),
+            func.coalesce(func.sum(WorkLog.duration_minutes), 0).label("actual_minutes"),
+        )
+        .select_from(WorkLog)
+        .join(Task, WorkLog.task_id == Task.id)
+        .join(Project, Task.project_id == Project.id)
+        .where(WorkLog.started_at >= start_at)
+        .group_by(Project.id, Project.title)
+        .order_by(func.sum(WorkLog.duration_minutes).desc(), Project.id.desc())
+    )
+
+    rows = result.all()
+    total_minutes = sum(int(row.actual_minutes or 0) for row in rows)
+
+    return [
+        ProjectTimeAllocationResponse(
+            project_id=row.project_id,
+            project_title=row.project_title,
+            actual_minutes=int(row.actual_minutes or 0),
+            percentage=(
+                round((int(row.actual_minutes or 0) / total_minutes) * 100, 1)
+                if total_minutes > 0
+                else 0.0
+            ),
+        )
+        for row in rows
+    ]
