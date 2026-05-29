@@ -12,6 +12,7 @@ import app.models
 from app.api.goals import router as goal_router
 from app.api.projects import router as project_router
 from app.api.tasks import router as task_router
+from app.api.calendar_events import router as calendar_event_router
 
 
 @asynccontextmanager
@@ -41,6 +42,7 @@ app.add_middleware(
 app.include_router(goal_router)
 app.include_router(project_router)
 app.include_router(task_router)
+app.include_router(calendar_event_router)
 
 
 @app.get("/health")
