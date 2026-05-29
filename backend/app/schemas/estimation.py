@@ -32,6 +32,7 @@ class EstimationAccuracyTaskResponse(BaseModel):
     estimated_minutes: int
     actual_minutes: int
     difference_minutes: int
+    estimation_judgement: str
     priority: str
     energy_level: str
     status: str
@@ -44,6 +45,8 @@ class EstimationAccuracyTrendResponse(BaseModel):
     average_actual_minutes: int
     average_difference_minutes: int
     underestimation_rate: float
+    accurate_estimation_rate: float
+    overestimation_rate: float
 
 
 class EstimationAccuracySummaryResponse(BaseModel):
@@ -52,6 +55,9 @@ class EstimationAccuracySummaryResponse(BaseModel):
     average_actual_minutes: int
     average_difference_minutes: int
     underestimation_rate: float
+    accurate_estimation_rate: float
+    overestimation_rate: float
+    estimation_threshold_rate: float
     task_type_trends: list[EstimationAccuracyTrendResponse]
     recent_tasks: list[EstimationAccuracyTaskResponse]
 

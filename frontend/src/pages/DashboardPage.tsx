@@ -45,16 +45,26 @@ function isInProgressTask(task: Task) {
   return ["in_progress", "doing", "active"].includes(task.status);
 }
 
-function getProjectProgressRate(project: Project) {
-  if (project.estimated_minutes <= 0) return 0;
+function getProjectProgressRate(project: Project, estimatedMinutes: number) {
+  if (estimatedMinutes <= 0) return 0;
   return Math.min(
     100,
-    Math.round((project.actual_minutes / project.estimated_minutes) * 100),
+    Math.round((project.actual_minutes / estimatedMinutes) * 100),
   );
 }
 
-function getRemainingMinutes(project: Project) {
-  return Math.max(0, project.estimated_minutes - project.actual_minutes);
+function getRemainingMinutes(project: Project, estimatedMinutes: number) {
+  return Math.max(0, estimatedMinutes - project.actual_minutes);
+}
+
+function getEffectiveProjectEstimatedMinutes(
+  project: Project,
+  plannedMinutes: number,
+  taskEstimatedMinutes: number,
+) {
+  if (project.estimated_minutes > 0) return project.estimated_minutes;
+  if (plannedMinutes > 0) return plannedMinutes;
+  return taskEstimatedMinutes;
 }
 
 function isVisibleProject(project: Project) {
@@ -89,6 +99,17 @@ function formatSignedMinutes(minutes: number) {
   if (minutes > 0) return `+${formatMinutes(minutes)}`;
   if (minutes < 0) return `-${formatMinutes(Math.abs(minutes))}`;
   return "差分なし";
+}
+
+function estimationJudgementLabel(judgement: string) {
+  const labels: Record<string, string> = {
+    underestimated: "過小見積",
+    accurate: "適正",
+    overestimated: "過大見積",
+    unknown: "判定不可",
+  };
+
+  return labels[judgement] ?? judgement;
 }
 
 export default function DashboardPage() {
@@ -154,11 +175,72 @@ export default function DashboardPage() {
       .sort((a, b) => b.actual_minutes - a.actual_minutes);
   }, [tasks]);
 
+  const plannedMinutesByProjectId = useMemo(() => {
+    const taskProjectIds = tasks.reduce<Record<number, number>>((acc, task) => {
+      acc[task.id] = task.project_id;
+      return acc;
+    }, {});
+
+    const projectIdsByTaskTitle = tasks.reduce<Record<string, Set<number>>>(
+      (acc, task) => {
+        const key = task.title.trim();
+        if (!key) return acc;
+
+        acc[key] = acc[key] ?? new Set<number>();
+        acc[key].add(task.project_id);
+        return acc;
+      },
+      {},
+    );
+
+    return todayEvents.reduce<Record<number, number>>((acc, event) => {
+      let projectId: number | undefined;
+
+      if (event.task_id != null) {
+        projectId = taskProjectIds[event.task_id];
+      }
+
+      if (projectId == null) {
+        const matchedProjectIds = projectIdsByTaskTitle[event.title.trim()];
+        if (matchedProjectIds?.size === 1) {
+          projectId = [...matchedProjectIds][0];
+        }
+      }
+
+      if (projectId == null) return acc;
+
+      acc[projectId] = (acc[projectId] ?? 0) + getEventMinutes(event);
+      return acc;
+    }, {});
+  }, [tasks, todayEvents]);
+
+  const taskEstimatedMinutesByProjectId = useMemo(() => {
+    return tasks.reduce<Record<number, number>>((acc, task) => {
+      acc[task.project_id] =
+        (acc[task.project_id] ?? 0) + Math.max(0, task.estimated_minutes);
+      return acc;
+    }, {});
+  }, [tasks]);
+
   const progressProjects = useMemo(() => {
-    return projects
-      .filter(isVisibleProject)
-      .sort((a, b) => getProjectProgressRate(b) - getProjectProgressRate(a));
-  }, [projects]);
+    return projects.filter(isVisibleProject).sort((a, b) => {
+      const aEstimatedMinutes = getEffectiveProjectEstimatedMinutes(
+        a,
+        plannedMinutesByProjectId[a.id] ?? 0,
+        taskEstimatedMinutesByProjectId[a.id] ?? 0,
+      );
+      const bEstimatedMinutes = getEffectiveProjectEstimatedMinutes(
+        b,
+        plannedMinutesByProjectId[b.id] ?? 0,
+        taskEstimatedMinutesByProjectId[b.id] ?? 0,
+      );
+
+      return (
+        getProjectProgressRate(b, bEstimatedMinutes) -
+        getProjectProgressRate(a, aEstimatedMinutes)
+      );
+    });
+  }, [plannedMinutesByProjectId, projects, taskEstimatedMinutesByProjectId]);
 
   return (
     <section style={{ padding: "32px", borderTop: "1px solid #ddd" }}>
@@ -255,8 +337,19 @@ export default function DashboardPage() {
               ) : (
                 <div style={{ display: "grid", gap: "12px" }}>
                   {progressProjects.map((project) => {
-                    const progressRate = getProjectProgressRate(project);
-                    const remainingMinutes = getRemainingMinutes(project);
+                    const estimatedMinutes = getEffectiveProjectEstimatedMinutes(
+                      project,
+                      plannedMinutesByProjectId[project.id] ?? 0,
+                      taskEstimatedMinutesByProjectId[project.id] ?? 0,
+                    );
+                    const progressRate = getProjectProgressRate(
+                      project,
+                      estimatedMinutes,
+                    );
+                    const remainingMinutes = getRemainingMinutes(
+                      project,
+                      estimatedMinutes,
+                    );
 
                     return (
                       <div key={project.id} style={itemStyle}>
@@ -293,7 +386,7 @@ export default function DashboardPage() {
                         </div>
 
                         <p style={mutedTextStyle}>
-                          予想 {formatMinutes(project.estimated_minutes)} / 実績{" "}
+                          予想 {formatMinutes(estimatedMinutes)} / 実績{" "}
                           {formatMinutes(project.actual_minutes)} / 残り{" "}
                           {formatMinutes(remainingMinutes)}
                         </p>
@@ -328,8 +421,17 @@ export default function DashboardPage() {
                       )}
                     </p>
                     <p style={mutedTextStyle}>
-                      過小見積率: {estimationAccuracy.underestimation_rate}
-                      %（対象 {estimationAccuracy.total_task_count}件）
+                      判定基準: ±
+                      {Math.round(
+                        estimationAccuracy.estimation_threshold_rate * 100,
+                      )}
+                      %以内は適正
+                    </p>
+                    <p style={mutedTextStyle}>
+                      過小見積率: {estimationAccuracy.underestimation_rate}% /
+                      適正率: {estimationAccuracy.accurate_estimation_rate}% /
+                      過大見積率: {estimationAccuracy.overestimation_rate}%
+                      （対象 {estimationAccuracy.total_task_count}件）
                     </p>
                   </div>
 
@@ -350,9 +452,9 @@ export default function DashboardPage() {
                         {estimationAccuracy.task_type_trends.map((trend) => (
                           <div key={trend.task_type}>
                             <p style={{ margin: 0 }}>
-                              {priorityLabel(trend.task_type)}: 過小見積率{" "}
-                              {trend.underestimation_rate}% / 平均差分{" "}
-                              {formatSignedMinutes(
+                              {priorityLabel(trend.task_type)}: 過小 {trend.underestimation_rate}% /
+                              適正 {trend.accurate_estimation_rate}% / 過大 {trend.overestimation_rate}% /
+                              平均差分 {formatSignedMinutes(
                                 trend.average_difference_minutes,
                               )}
                             </p>
@@ -380,7 +482,8 @@ export default function DashboardPage() {
                             {task.project_title} / 予定{" "}
                             {formatMinutes(task.estimated_minutes)} / 実績{" "}
                             {formatMinutes(task.actual_minutes)} / 差分{" "}
-                            {formatSignedMinutes(task.difference_minutes)}
+                            {formatSignedMinutes(task.difference_minutes)} / 判定{" "}
+                            {estimationJudgementLabel(task.estimation_judgement)}
                           </p>
                         </div>
                       ))}

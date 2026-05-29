@@ -8,6 +8,7 @@ export type EstimationAccuracyTask = {
   estimated_minutes: number;
   actual_minutes: number;
   difference_minutes: number;
+  estimation_judgement: string;
   priority: string;
   energy_level: string;
   status: string;
@@ -20,6 +21,8 @@ export type EstimationAccuracyTrend = {
   average_actual_minutes: number;
   average_difference_minutes: number;
   underestimation_rate: number;
+  accurate_estimation_rate: number;
+  overestimation_rate: number;
 };
 
 export type EstimationAccuracySummary = {
@@ -28,6 +31,9 @@ export type EstimationAccuracySummary = {
   average_actual_minutes: number;
   average_difference_minutes: number;
   underestimation_rate: number;
+  accurate_estimation_rate: number;
+  overestimation_rate: number;
+  estimation_threshold_rate: number;
   task_type_trends: EstimationAccuracyTrend[];
   recent_tasks: EstimationAccuracyTask[];
 };

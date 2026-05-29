@@ -1,10 +1,11 @@
 import re
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.models.calendar_event import CalendarEvent
 from app.models.project import Project
 from app.models.task import Task
 from app.models.work_log import WorkLog
@@ -22,6 +23,27 @@ router = APIRouter(
 )
 
 TOKEN_PATTERN = re.compile(r"[\w\u3040-\u30ff\u3400-\u9fff]+")
+ESTIMATION_THRESHOLD_RATE = 0.1
+
+
+def judge_estimation(estimated_minutes: int, actual_minutes: int) -> str:
+    if estimated_minutes <= 0:
+        return "unknown"
+
+    under_threshold = estimated_minutes * (1 + ESTIMATION_THRESHOLD_RATE)
+    over_threshold = estimated_minutes * (1 - ESTIMATION_THRESHOLD_RATE)
+
+    if actual_minutes > under_threshold:
+        return "underestimated"
+    if actual_minutes < over_threshold:
+        return "overestimated"
+    return "accurate"
+
+
+def calculate_rate(count: int, total_count: int) -> float:
+    if total_count <= 0:
+        return 0.0
+    return round((count / total_count) * 100, 1)
 
 
 def tokenize(text: str | None) -> list[str]:
@@ -31,6 +53,46 @@ def tokenize(text: str | None) -> list[str]:
     tokens = [token.lower() for token in TOKEN_PATTERN.findall(text)]
     return [token for token in tokens if len(token) >= 2]
 
+
+
+def build_linked_calendar_plan_subquery():
+    event_minutes_expr = (
+        (
+            func.strftime("%s", CalendarEvent.end_time)
+            - func.strftime("%s", CalendarEvent.start_time)
+        ) / 60
+    )
+
+    distinct_event_plans = (
+        select(
+            WorkLog.task_id.label("task_id"),
+            WorkLog.calendar_event_id.label("calendar_event_id"),
+            event_minutes_expr.label("planned_minutes"),
+        )
+        .join(CalendarEvent, CalendarEvent.id == WorkLog.calendar_event_id)
+        .where(WorkLog.task_id.is_not(None))
+        .where(WorkLog.calendar_event_id.is_not(None))
+        .where(CalendarEvent.status != "cancelled")
+        .group_by(
+            WorkLog.task_id,
+            WorkLog.calendar_event_id,
+            CalendarEvent.start_time,
+            CalendarEvent.end_time,
+        )
+        .subquery()
+    )
+
+    return (
+        select(
+            distinct_event_plans.c.task_id,
+            func.coalesce(
+                func.sum(distinct_event_plans.c.planned_minutes),
+                0,
+            ).label("planned_minutes"),
+        )
+        .group_by(distinct_event_plans.c.task_id)
+        .subquery()
+    )
 
 def calculate_similarity_score(
     search_tokens: list[str],
@@ -77,6 +139,11 @@ async def get_task_estimate_suggestion(
         Task.actual_minutes,
         0,
     )
+    planned_minutes_by_task = build_linked_calendar_plan_subquery()
+    effective_estimated_minutes_expr = case(
+        (Task.estimated_minutes > 0, Task.estimated_minutes),
+        else_=func.coalesce(planned_minutes_by_task.c.planned_minutes, 0),
+    )
 
     conditions = []
     for token in search_tokens:
@@ -91,7 +158,7 @@ async def get_task_estimate_suggestion(
             Project.title.label("project_title"),
             Task.title,
             Task.description,
-            Task.estimated_minutes,
+            effective_estimated_minutes_expr.label("estimated_minutes"),
             actual_minutes_expr.label("actual_minutes"),
             Task.priority,
             Task.energy_level,
@@ -100,6 +167,7 @@ async def get_task_estimate_suggestion(
         .select_from(Task)
         .join(Project, Task.project_id == Project.id)
         .outerjoin(WorkLog, WorkLog.task_id == Task.id)
+        .outerjoin(planned_minutes_by_task, planned_minutes_by_task.c.task_id == Task.id)
         .group_by(
             Task.id,
             Task.project_id,
@@ -108,6 +176,7 @@ async def get_task_estimate_suggestion(
             Task.description,
             Task.estimated_minutes,
             Task.actual_minutes,
+            planned_minutes_by_task.c.planned_minutes,
             Task.priority,
             Task.energy_level,
             Task.status,
@@ -184,6 +253,11 @@ async def get_estimation_accuracy_summary(
         Task.actual_minutes,
         0,
     )
+    planned_minutes_by_task = build_linked_calendar_plan_subquery()
+    effective_estimated_minutes_expr = case(
+        (Task.estimated_minutes > 0, Task.estimated_minutes),
+        else_=func.coalesce(planned_minutes_by_task.c.planned_minutes, 0),
+    )
 
     result = await db.execute(
         select(
@@ -191,7 +265,7 @@ async def get_estimation_accuracy_summary(
             Task.project_id,
             Project.title.label("project_title"),
             Task.title,
-            Task.estimated_minutes,
+            effective_estimated_minutes_expr.label("estimated_minutes"),
             actual_minutes_expr.label("actual_minutes"),
             Task.priority,
             Task.energy_level,
@@ -200,6 +274,7 @@ async def get_estimation_accuracy_summary(
         .select_from(Task)
         .join(Project, Task.project_id == Project.id)
         .outerjoin(WorkLog, WorkLog.task_id == Task.id)
+        .outerjoin(planned_minutes_by_task, planned_minutes_by_task.c.task_id == Task.id)
         .group_by(
             Task.id,
             Task.project_id,
@@ -207,6 +282,7 @@ async def get_estimation_accuracy_summary(
             Task.title,
             Task.estimated_minutes,
             Task.actual_minutes,
+            planned_minutes_by_task.c.planned_minutes,
             Task.priority,
             Task.energy_level,
             Task.status,
@@ -216,21 +292,28 @@ async def get_estimation_accuracy_summary(
     )
 
     rows = result.all()
-    accuracy_tasks = [
-        EstimationAccuracyTaskResponse(
-            id=row.id,
-            project_id=row.project_id,
-            project_title=row.project_title,
-            title=row.title,
-            estimated_minutes=int(row.estimated_minutes or 0),
-            actual_minutes=int(row.actual_minutes or 0),
-            difference_minutes=int(row.actual_minutes or 0) - int(row.estimated_minutes or 0),
-            priority=row.priority,
-            energy_level=row.energy_level,
-            status=row.status,
+    accuracy_tasks = []
+    for row in rows:
+        estimated_minutes = int(row.estimated_minutes or 0)
+        actual_minutes = int(row.actual_minutes or 0)
+        accuracy_tasks.append(
+            EstimationAccuracyTaskResponse(
+                id=row.id,
+                project_id=row.project_id,
+                project_title=row.project_title,
+                title=row.title,
+                estimated_minutes=estimated_minutes,
+                actual_minutes=actual_minutes,
+                difference_minutes=actual_minutes - estimated_minutes,
+                estimation_judgement=judge_estimation(
+                    estimated_minutes=estimated_minutes,
+                    actual_minutes=actual_minutes,
+                ),
+                priority=row.priority,
+                energy_level=row.energy_level,
+                status=row.status,
+            )
         )
-        for row in rows
-    ]
 
     total_task_count = len(accuracy_tasks)
     if total_task_count == 0:
@@ -240,6 +323,9 @@ async def get_estimation_accuracy_summary(
             average_actual_minutes=0,
             average_difference_minutes=0,
             underestimation_rate=0.0,
+            accurate_estimation_rate=0.0,
+            overestimation_rate=0.0,
+            estimation_threshold_rate=ESTIMATION_THRESHOLD_RATE,
             task_type_trends=[],
             recent_tasks=[],
         )
@@ -254,9 +340,17 @@ async def get_estimation_accuracy_summary(
         sum(task.difference_minutes for task in accuracy_tasks) / total_task_count
     )
     underestimation_count = sum(
-        1 for task in accuracy_tasks if task.actual_minutes > task.estimated_minutes
+        1 for task in accuracy_tasks if task.estimation_judgement == "underestimated"
     )
-    underestimation_rate = round((underestimation_count / total_task_count) * 100, 1)
+    accurate_estimation_count = sum(
+        1 for task in accuracy_tasks if task.estimation_judgement == "accurate"
+    )
+    overestimation_count = sum(
+        1 for task in accuracy_tasks if task.estimation_judgement == "overestimated"
+    )
+    underestimation_rate = calculate_rate(underestimation_count, total_task_count)
+    accurate_estimation_rate = calculate_rate(accurate_estimation_count, total_task_count)
+    overestimation_rate = calculate_rate(overestimation_count, total_task_count)
 
     tasks_by_type: dict[str, list[EstimationAccuracyTaskResponse]] = {}
     for task in accuracy_tasks:
@@ -266,7 +360,13 @@ async def get_estimation_accuracy_summary(
     for task_type, tasks in tasks_by_type.items():
         task_count = len(tasks)
         underestimated_count = sum(
-            1 for task in tasks if task.actual_minutes > task.estimated_minutes
+            1 for task in tasks if task.estimation_judgement == "underestimated"
+        )
+        accurate_count = sum(
+            1 for task in tasks if task.estimation_judgement == "accurate"
+        )
+        overestimated_count = sum(
+            1 for task in tasks if task.estimation_judgement == "overestimated"
         )
         task_type_trends.append(
             EstimationAccuracyTrendResponse(
@@ -281,7 +381,9 @@ async def get_estimation_accuracy_summary(
                 average_difference_minutes=round(
                     sum(task.difference_minutes for task in tasks) / task_count
                 ),
-                underestimation_rate=round((underestimated_count / task_count) * 100, 1),
+                underestimation_rate=calculate_rate(underestimated_count, task_count),
+                accurate_estimation_rate=calculate_rate(accurate_count, task_count),
+                overestimation_rate=calculate_rate(overestimated_count, task_count),
             )
         )
 
@@ -296,6 +398,9 @@ async def get_estimation_accuracy_summary(
         average_actual_minutes=average_actual_minutes,
         average_difference_minutes=average_difference_minutes,
         underestimation_rate=underestimation_rate,
+        accurate_estimation_rate=accurate_estimation_rate,
+        overestimation_rate=overestimation_rate,
+        estimation_threshold_rate=ESTIMATION_THRESHOLD_RATE,
         task_type_trends=task_type_trends,
         recent_tasks=accuracy_tasks[:limit],
     )
