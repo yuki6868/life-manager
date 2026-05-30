@@ -225,3 +225,6 @@ backend/life_manager.db
 
 # patch
 *.patch
+
+# Image
+フリーランス計画.png
