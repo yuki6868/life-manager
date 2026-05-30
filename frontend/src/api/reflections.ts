@@ -21,8 +21,11 @@ export type ReflectionInput = {
   memo?: string | null;
 };
 
-export async function fetchReflections(): Promise<Reflection[]> {
-  const res = await apiClient.get("/reflections/");
+export async function fetchReflections(params?: {
+  start_date?: string;
+  end_date?: string;
+}): Promise<Reflection[]> {
+  const res = await apiClient.get("/reflections/", { params });
   return res.data;
 }
 
