@@ -793,7 +793,7 @@ export default function DashboardPage() {
       {!isLoading && !errorMessage && (
         <>
           <div className="secretary-board">
-            <DashboardTimeline events={todayEvents} onAddEvent={() => openEventModal()} />
+            <DashboardTimeline events={todayEvents} onAddEvent={() => openEventModal()} onAddUrgentTask={() => navigate("/timer#urgent-interrupt")} />
 
             <div className="secretary-center-column">
               <section className="secretary-card secretary-summary-card">
@@ -914,7 +914,7 @@ export default function DashboardPage() {
   );
 }
 
-function DashboardTimeline({ events, onAddEvent }: { events: CalendarEvent[]; onAddEvent: () => void }) {
+function DashboardTimeline({ events, onAddEvent, onAddUrgentTask }: { events: CalendarEvent[]; onAddEvent: () => void; onAddUrgentTask: () => void }) {
   const startHour = 7;
   const endHour = 23;
   const hourHeight = 64;
@@ -923,6 +923,16 @@ function DashboardTimeline({ events, onAddEvent }: { events: CalendarEvent[]; on
 
   return (
     <section className="secretary-timeline-card">
+      <div className="secretary-timeline-card__header">
+        <div>
+          <span>MAIN CALENDAR</span>
+          <h2>今日の予定</h2>
+        </div>
+        <div className="secretary-timeline-card__actions">
+          <button type="button" className="secretary-add-slot" onClick={onAddEvent}>＋ 予定を追加</button>
+          <button type="button" className="secretary-urgent-slot" onClick={onAddUrgentTask}>⚡ 緊急タスク割り込み</button>
+        </div>
+      </div>
       <div className="secretary-timeline">
         {Array.from({ length: endHour - startHour + 1 }, (_, index) => startHour + index).map((hour) => (
           <div key={hour} className="secretary-time-row"><span>{hour}:00</span></div>

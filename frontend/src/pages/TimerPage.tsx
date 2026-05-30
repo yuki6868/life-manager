@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createWorkLog } from "../api/workLogs";
 import { fetchCalendarEvents } from "../api/calendarEvents";
@@ -15,6 +15,53 @@ type InterruptedTimerSnapshot = {
   elapsedBeforePauseMs: number;
   memo: string;
 };
+
+const TIMER_STORAGE_KEY = "life-manager.timer.state.v1";
+
+type PersistedInterruptedTimerSnapshot = Omit<InterruptedTimerSnapshot, "startedAt"> & {
+  startedAt: string | null;
+};
+
+type PersistedTimerState = {
+  selectedTaskId: string;
+  selectedCalendarEventId: string;
+  status: TimerStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  runningStartedAtMs: number | null;
+  elapsedBeforePauseMs: number;
+  memo: string;
+  interruptedTimerSnapshot: PersistedInterruptedTimerSnapshot | null;
+};
+
+function parseStoredDate(value: string | null) {
+  if (!value) return null;
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function serializeInterruptedSnapshot(
+  snapshot: InterruptedTimerSnapshot | null,
+): PersistedInterruptedTimerSnapshot | null {
+  if (!snapshot) return null;
+
+  return {
+    ...snapshot,
+    startedAt: snapshot.startedAt?.toISOString() ?? null,
+  };
+}
+
+function deserializeInterruptedSnapshot(
+  snapshot: PersistedInterruptedTimerSnapshot | null | undefined,
+): InterruptedTimerSnapshot | null {
+  if (!snapshot) return null;
+
+  return {
+    ...snapshot,
+    startedAt: parseStoredDate(snapshot.startedAt),
+  };
+}
 
 function formatElapsed(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600);
@@ -74,6 +121,62 @@ export default function TimerPage() {
   const [isCreatingUrgentTask, setIsCreatingUrgentTask] = useState(false);
   const [urgentMessage, setUrgentMessage] = useState("");
   const [urgentErrorMessage, setUrgentErrorMessage] = useState("");
+  const [hasRestoredTimerState, setHasRestoredTimerState] = useState(false);
+  const didRestoreTimerStateRef = useRef(false);
+
+  useEffect(() => {
+    if (didRestoreTimerStateRef.current) return;
+    didRestoreTimerStateRef.current = true;
+
+    const storedTimerState = window.localStorage.getItem(TIMER_STORAGE_KEY);
+    if (!storedTimerState) {
+      setHasRestoredTimerState(true);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(storedTimerState) as Partial<PersistedTimerState>;
+      const restoredStatus: TimerStatus =
+        parsed.status === "running" ||
+        parsed.status === "paused" ||
+        parsed.status === "stopped"
+          ? parsed.status
+          : "idle";
+      const restoredElapsedBeforePauseMs = Math.max(
+        0,
+        Number(parsed.elapsedBeforePauseMs ?? 0),
+      );
+      const restoredRunningStartedAtMs =
+        typeof parsed.runningStartedAtMs === "number"
+          ? parsed.runningStartedAtMs
+          : null;
+      const restoredElapsedMs =
+        restoredStatus === "running" && restoredRunningStartedAtMs !== null
+          ? restoredElapsedBeforePauseMs +
+            Math.max(0, Date.now() - restoredRunningStartedAtMs)
+          : restoredElapsedBeforePauseMs;
+
+      setSelectedTaskId(parsed.selectedTaskId ?? "");
+      setSelectedCalendarEventId(parsed.selectedCalendarEventId ?? "");
+      setStatus(restoredStatus);
+      setStartedAt(parseStoredDate(parsed.startedAt ?? null));
+      setEndedAt(parseStoredDate(parsed.endedAt ?? null));
+      setRunningStartedAtMs(
+        restoredStatus === "running" ? restoredRunningStartedAtMs : null,
+      );
+      setElapsedBeforePauseMs(restoredElapsedBeforePauseMs);
+      setElapsedSeconds(Math.floor(restoredElapsedMs / 1000));
+      setMemo(parsed.memo ?? "");
+      setInterruptedTimerSnapshot(
+        deserializeInterruptedSnapshot(parsed.interruptedTimerSnapshot),
+      );
+    } catch (error) {
+      console.error("Failed to restore timer state", error);
+      window.localStorage.removeItem(TIMER_STORAGE_KEY);
+    } finally {
+      setHasRestoredTimerState(true);
+    }
+  }, []);
 
   useEffect(() => {
     Promise.all([fetchTasks(), fetchCalendarEvents()]).then(([taskData, eventData]) => {
@@ -92,6 +195,35 @@ export default function TimerPage() {
 
     return () => window.clearInterval(intervalId);
   }, [elapsedBeforePauseMs, runningStartedAtMs, status]);
+
+  useEffect(() => {
+    if (!hasRestoredTimerState) return;
+
+    const timerState: PersistedTimerState = {
+      selectedTaskId,
+      selectedCalendarEventId,
+      status,
+      startedAt: startedAt?.toISOString() ?? null,
+      endedAt: endedAt?.toISOString() ?? null,
+      runningStartedAtMs,
+      elapsedBeforePauseMs,
+      memo,
+      interruptedTimerSnapshot: serializeInterruptedSnapshot(interruptedTimerSnapshot),
+    };
+
+    window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timerState));
+  }, [
+    elapsedBeforePauseMs,
+    endedAt,
+    hasRestoredTimerState,
+    interruptedTimerSnapshot,
+    memo,
+    runningStartedAtMs,
+    selectedCalendarEventId,
+    selectedTaskId,
+    startedAt,
+    status,
+  ]);
 
   const selectedTask = useMemo(() => {
     return tasks.find((task) => task.id === Number(selectedTaskId)) ?? null;
@@ -364,295 +496,228 @@ export default function TimerPage() {
     setUrgentErrorMessage("");
   }
 
+  const focusCycleSeconds = 25 * 60;
+  const timerProgressPercent = Math.min(100, (elapsedSeconds / focusCycleSeconds) * 100);
+  const secondsUntilBreak = Math.max(0, focusCycleSeconds - elapsedSeconds);
+  const displayTaskTitle = selectedTask?.title ?? selectedCalendarEvent?.title ?? "作業タスクを選択してください";
+  const displayTaskMeta = selectedTask
+    ? `${selectedTask.task_type === "urgent" ? "緊急タスク" : "通常タスク"} / 見積 ${selectedTask.estimated_minutes}分 / ${selectedTask.energy_level}`
+    : selectedCalendarEvent
+      ? `予定 / 計画 ${getPlannedMinutes(selectedCalendarEvent)}分 / ${selectedCalendarEvent.status}`
+      : "予定またはタスクを選ぶと、ここに詳細が表示されます。";
+  const todaysCompletedTaskCount = tasks.filter((task) => task.status === "completed").length;
+  const totalFocusMinutes = Math.floor(elapsedSeconds / 60);
+  const productivityScore = Math.min(100, Math.max(0, 60 + todaysCompletedTaskCount * 5 + Math.floor(totalFocusMinutes / 10)));
+  const upcomingEvents = selectableCalendarEvents
+    .filter((event) => new Date(event.end_time).getTime() >= Date.now())
+    .slice(0, 5);
+
+  function formatShortTime(value: string) {
+    return new Date(value).toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function formatMinuteLabel(minutes: number | null) {
+    if (minutes === null) return "-";
+    return `${minutes}分`;
+  }
+
   return (
-    <section
-      className="landscape-page landscape-timer-page"
-      style={{
-        padding: "32px",
-        borderTop: "1px solid #ddd",
-      }}
-    >
-      <h1>タイマー</h1>
-      <p style={{ color: "#666" }}>
-        作業の開始・一時停止・再開・停止を管理します。停止時に作業ログへ保存し、タスク・プロジェクトの実績時間を更新します。
-      </p>
-
-      <section
-        style={{
-          display: "grid",
-          gap: "12px",
-          maxWidth: "620px",
-          padding: "20px",
-          border: "1px solid #ffd2d2",
-          borderRadius: "12px",
-          background: "#fff7f7",
-          marginBottom: "20px",
-        }}
-      >
-        <h2 style={{ margin: 0 }}>緊急タスク割り込み</h2>
-        <p style={{ color: "#666", margin: 0 }}>
-          突然入ったタスクを登録し、現在のタイマーが動いている場合は中断してから緊急タスクを開始します。
-        </p>
-
-        {interruptedTimerSnapshot && status === "stopped" && (
-          <div
-            style={{
-              padding: "12px",
-              border: "1px solid #ffd28a",
-              borderRadius: "10px",
-              background: "#fff9ec",
-            }}
-          >
-            <strong>中断中の元タスクがあります。</strong>
-            <div style={{ fontSize: "13px", color: "#666", marginTop: "4px" }}>
-              経過時間 {formatElapsed(Math.floor(interruptedTimerSnapshot.elapsedBeforePauseMs / 1000))}
-            </div>
-            <button
-              type="button"
-              onClick={handleResumeInterruptedTask}
-              disabled={isSaving || isCreatingUrgentTask}
-              style={{ marginTop: "8px" }}
-            >
-              元タスクを再開
-            </button>
-          </div>
-        )}
-
-        <form onSubmit={handleCreateAndStartUrgentTask} style={{ display: "grid", gap: "10px" }}>
-          <label>
-            緊急タスク名
-            <input
-              value={urgentTitle}
-              onChange={(e) => setUrgentTitle(e.target.value)}
-              placeholder="例：急ぎの連絡対応"
-              disabled={isCreatingUrgentTask || isSaving}
-              style={{ display: "block", width: "100%", padding: "8px" }}
-            />
-          </label>
-
-          <label>
-            割り込み理由
-            <textarea
-              value={urgentInterruptionReason}
-              onChange={(e) => setUrgentInterruptionReason(e.target.value)}
-              placeholder="例：クライアントから至急確認依頼が来た"
-              disabled={isCreatingUrgentTask || isSaving}
-              style={{ display: "block", width: "100%", padding: "8px", minHeight: "64px" }}
-            />
-          </label>
-
-          <label>
-            詳細メモ
-            <textarea
-              value={urgentDescription}
-              onChange={(e) => setUrgentDescription(e.target.value)}
-              placeholder="緊急タスクの内容を書く"
-              disabled={isCreatingUrgentTask || isSaving}
-              style={{ display: "block", width: "100%", padding: "8px", minHeight: "64px" }}
-            />
-          </label>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
-            <label>
-              見積分
-              <input
-                type="number"
-                min="1"
-                value={urgentEstimatedMinutes}
-                onChange={(e) => setUrgentEstimatedMinutes(e.target.value)}
-                disabled={isCreatingUrgentTask || isSaving}
-                style={{ display: "block", width: "100%", padding: "8px" }}
-              />
-            </label>
-            <label>
-              緊急度
-              <input
-                type="number"
-                min="1"
-                max="5"
-                value={urgentUrgency}
-                onChange={(e) => setUrgentUrgency(e.target.value)}
-                disabled={isCreatingUrgentTask || isSaving}
-                style={{ display: "block", width: "100%", padding: "8px" }}
-              />
-            </label>
-            <label>
-              重要度
-              <input
-                type="number"
-                min="1"
-                max="5"
-                value={urgentImportance}
-                onChange={(e) => setUrgentImportance(e.target.value)}
-                disabled={isCreatingUrgentTask || isSaving}
-                style={{ display: "block", width: "100%", padding: "8px" }}
-              />
-            </label>
-            <label>
-              エネルギー
-              <select
-                value={urgentEnergyLevel}
-                onChange={(e) => setUrgentEnergyLevel(e.target.value)}
-                disabled={isCreatingUrgentTask || isSaving}
-                style={{ display: "block", width: "100%", padding: "8px" }}
-              >
-                <option value="high">高集中</option>
-                <option value="medium">普通</option>
-                <option value="low">低め</option>
-              </select>
-            </label>
-          </div>
-
-          <button
-            type="submit"
-            disabled={!urgentTitle.trim() || isCreatingUrgentTask || isSaving}
-          >
-            {isTimerActive ? "現在タスクを中断して緊急タスク開始" : "緊急タスク追加して開始"}
-          </button>
-        </form>
-
-        {urgentMessage && <div style={{ color: "#0a7f35" }}>{urgentMessage}</div>}
-        {urgentErrorMessage && <div style={{ color: "#b00020" }}>{urgentErrorMessage}</div>}
-      </section>
-
-      <div
-        style={{
-          display: "grid",
-          gap: "16px",
-          maxWidth: "620px",
-          padding: "20px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <label>
-          紐づける予定
-          <select
-            value={selectedCalendarEventId}
-            onChange={(e) => handleSelectCalendarEvent(e.target.value)}
-            disabled={status === "running" || status === "paused"}
-            style={{ display: "block", width: "100%", padding: "8px" }}
-          >
-            <option value="">予定に紐づけない</option>
-            {selectableCalendarEvents.map((event) => (
-              <option key={event.id} value={event.id}>
-                {event.title} / {event.start_time.slice(0, 16).replace("T", " ")} / {event.status}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {selectedCalendarEvent && (
-          <div
-            style={{
-              padding: "12px",
-              background: "#fff9ec",
-              border: "1px solid #ffe1a8",
-              borderRadius: "10px",
-            }}
-          >
-            <strong>予定: {selectedCalendarEvent.title}</strong>
-            <div style={{ fontSize: "13px", color: "#666", marginTop: "4px" }}>
-              計画時間 {getPlannedMinutes(selectedCalendarEvent)}分 / 状態 {selectedCalendarEvent.status}
-            </div>
-          </div>
-        )}
-
-        <label>
-          作業タスク
-          <select
-            value={selectedTaskId}
-            onChange={(e) => setSelectedTaskId(e.target.value)}
-            disabled={status === "running" || status === "paused"}
-            style={{ display: "block", width: "100%", padding: "8px" }}
-          >
-            <option value="">タスクを選択しない</option>
-            {tasks.map((task) => (
-              <option key={task.id} value={task.id}>
-                {task.title}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {selectedTask && (
-          <div
-            style={{
-              padding: "12px",
-              background: "#f7fbff",
-              border: "1px solid #d9f3ff",
-              borderRadius: "10px",
-            }}
-          >
-            <strong>{selectedTask.title}</strong>
-            <div style={{ fontSize: "13px", color: "#666", marginTop: "4px" }}>
-              見積 {selectedTask.estimated_minutes}分 / 優先度 {selectedTask.priority} / エネルギー {selectedTask.energy_level}
-            </div>
-            {selectedTask.task_type === "urgent" && (
-              <div style={{ fontSize: "13px", color: "#b00020", marginTop: "4px" }}>
-                緊急タスク / 緊急度 {selectedTask.urgency ?? "-"} / 重要度 {selectedTask.importance ?? "-"}
-                {selectedTask.interruption_reason ? ` / 理由: ${selectedTask.interruption_reason}` : ""}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div
-          style={{
-            fontSize: "48px",
-            fontWeight: 700,
-            letterSpacing: "0.06em",
-            textAlign: "center",
-          }}
-        >
-          {formatElapsed(elapsedSeconds)}
+    <section className="timer-page-redesign">
+      <div className="timer-page-redesign__header">
+        <div>
+          <h1>タイマー</h1>
+          <p>集中・休憩・緊急割り込みを一画面で扱える、作業用タイマーです。</p>
         </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: "8px",
-          }}
-        >
-          <button type="button" onClick={handleStart} disabled={!canStart}>
-            開始
-          </button>
-          <button type="button" onClick={handlePause} disabled={!canPause}>
-            一時停止
-          </button>
-          <button type="button" onClick={handleResume} disabled={!canResume}>
-            再開
-          </button>
-          <button type="button" onClick={handleStop} disabled={!canStop || isSaving}>
-            停止して保存
-          </button>
-        </div>
-
-        <label>
-          実績メモ
-          <textarea
-            value={memo}
-            onChange={(e) => setMemo(e.target.value)}
-            disabled={isSaving}
-            placeholder="例：API実装、エラー調査など"
-            style={{ display: "block", width: "100%", padding: "8px", minHeight: "72px" }}
-          />
-        </label>
-
-        {saveMessage && <div style={{ color: "#0a7f35" }}>{saveMessage}</div>}
-        {errorMessage && <div style={{ color: "#b00020" }}>{errorMessage}</div>}
-
-        <button type="button" onClick={handleReset} disabled={status === "running" || isSaving}>
-          リセット
-        </button>
-
-        <div style={{ color: "#666", fontSize: "14px" }}>
-          <div>状態: {status}</div>
-          <div>開始: {formatDateTime(startedAt)}</div>
-          <div>停止: {formatDateTime(endedAt)}</div>
+        <div className="timer-header-actions">
+          <button type="button" className="timer-ghost-button">◎ 集中モード</button>
+          <button type="button" className="timer-ghost-button">⚙ タイマー設定</button>
+          <a className="timer-danger-button" href="#urgent-interrupt">⚡ 緊急タスク割り込み</a>
         </div>
       </div>
+
+      <div className="timer-tip-card">
+        <div className="timer-tip-card__icon" aria-hidden="true">✦</div>
+        <div>
+          <strong>集中のコツ</strong>
+          <p>25分集中 + 5分休憩のサイクルで、生産性を高めましょう。</p>
+        </div>
+      </div>
+
+      {(saveMessage || errorMessage || urgentMessage || urgentErrorMessage) && (
+        <div className="timer-message-stack">
+          {saveMessage && <div className="timer-message timer-message--success">{saveMessage}</div>}
+          {urgentMessage && <div className="timer-message timer-message--success">{urgentMessage}</div>}
+          {errorMessage && <div className="timer-message timer-message--error">{errorMessage}</div>}
+          {urgentErrorMessage && <div className="timer-message timer-message--error">{urgentErrorMessage}</div>}
+        </div>
+      )}
+
+      <div className="timer-layout-grid">
+        <div className="timer-left-column">
+          <section className="timer-card timer-focus-card">
+            <div className="timer-card__title-row">
+              <div>
+                <p className="timer-section-label">現在のタスク</p>
+                <h2>{displayTaskTitle}</h2>
+              </div>
+              <span className={`timer-status-pill timer-status-pill--${status}`}>
+                {status === "running" ? "集中中" : status === "paused" ? "一時停止" : status === "stopped" ? "保存済み" : "待機中"}
+              </span>
+            </div>
+
+            <div className="timer-linked-selects">
+              <label>
+                紐づける予定
+                <select value={selectedCalendarEventId} onChange={(e) => handleSelectCalendarEvent(e.target.value)} disabled={isTimerActive}>
+                  <option value="">予定に紐づけない</option>
+                  {selectableCalendarEvents.map((event) => (
+                    <option key={event.id} value={event.id}>
+                      {event.title} / {event.start_time.slice(0, 16).replace("T", " ")} / {event.status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                作業タスク
+                <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)} disabled={isTimerActive}>
+                  <option value="">タスクを選択しない</option>
+                  {tasks.map((task) => (
+                    <option key={task.id} value={task.id}>{task.title}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="timer-task-meta-card">
+              <span>{selectedTaskIsUrgent ? "⚡" : "□"}</span>
+              <div>
+                <strong>{selectedTask?.title ?? selectedCalendarEvent?.title ?? "未選択"}</strong>
+                <p>{displayTaskMeta}</p>
+                {selectedTask?.interruption_reason && <p>理由: {selectedTask.interruption_reason}</p>}
+              </div>
+            </div>
+
+            <div className="timer-circle-wrap">
+              <div className="timer-progress-ring" style={{ background: `conic-gradient(#2563eb ${timerProgressPercent}%, #e8edf5 0)` }}>
+                <div className="timer-progress-ring__inner">
+                  <span className="timer-dot">● {status === "running" ? "集中中" : status === "paused" ? "休止中" : "待機中"}</span>
+                  <strong>{formatElapsed(elapsedSeconds)}</strong>
+                  <p>{status === "running" ? "25分集中" : status === "paused" ? "一時停止中" : "開始を押して計測"}</p>
+                </div>
+              </div>
+              <span className="timer-break-pill">休憩まで {formatElapsed(secondsUntilBreak)}</span>
+            </div>
+
+            <div className="timer-main-actions">
+              {canStart && <button type="button" className="timer-primary-button" onClick={handleStart}>▶ 開始する</button>}
+              {canPause && <button type="button" className="timer-primary-button" onClick={handlePause}>Ⅱ 一時停止</button>}
+              {canResume && <button type="button" className="timer-primary-button" onClick={handleResume}>▶ 再開する</button>}
+              <button type="button" className="timer-secondary-button" onClick={handleStop} disabled={!canStop || isSaving}>■ 終了して保存</button>
+            </div>
+
+            <label className="timer-memo-field">
+              実績メモ
+              <textarea value={memo} onChange={(e) => setMemo(e.target.value)} disabled={isSaving} placeholder="例：API実装、エラー調査など" />
+            </label>
+          </section>
+
+          <section className="timer-card timer-stats-card">
+            <h2>今日の集中記録</h2>
+            <div className="timer-stats-grid">
+              <div><span>集中時間</span><strong>{totalFocusMinutes}分</strong><small>現在の計測</small></div>
+              <div><span>完了タスク</span><strong>{todaysCompletedTaskCount}件</strong><small>全タスク基準</small></div>
+              <div><span>集中回数</span><strong>{elapsedSeconds > 0 ? 1 : 0}回</strong><small>この画面</small></div>
+              <div><span>生産性スコア</span><strong>{productivityScore}%</strong><small>目安</small></div>
+            </div>
+            <div className="timer-goal-bar"><span style={{ width: `${Math.min(100, productivityScore)}%` }} /></div>
+            <div className="timer-log-meta">
+              <span>開始: {formatDateTime(startedAt)}</span>
+              <span>停止: {formatDateTime(endedAt)}</span>
+              <button type="button" onClick={handleReset} disabled={status === "running" || isSaving}>リセット</button>
+            </div>
+          </section>
+        </div>
+
+        <div className="timer-right-column">
+          <section className="timer-card timer-schedule-card">
+            <div className="timer-card__title-row">
+              <h2>次の予定タスク</h2>
+              <span>すべて見る</span>
+            </div>
+            <div className="timer-schedule-list">
+              {upcomingEvents.length === 0 ? (
+                <p className="timer-empty-text">この後の予定はありません。</p>
+              ) : (
+                upcomingEvents.map((event, index) => (
+                  <button type="button" key={event.id} className={index === 0 ? "timer-schedule-item timer-schedule-item--next" : "timer-schedule-item"} onClick={() => handleSelectCalendarEvent(String(event.id))} disabled={isTimerActive}>
+                    <time>{formatShortTime(event.start_time)}</time>
+                    <span><strong>{event.title}</strong><small>予定</small></span>
+                    <em>{formatMinuteLabel(getPlannedMinutes(event))}</em>
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="timer-card timer-break-card">
+            <h2>休憩中におすすめ</h2>
+            <p>リフレッシュして集中力を維持しましょう。</p>
+            <div className="timer-break-actions">
+              <button type="button">🚶<strong>ストレッチ</strong><span>3分</span></button>
+              <button type="button">☕<strong>水分補給</strong><span>2分</span></button>
+              <button type="button">🎵<strong>深呼吸</strong><span>2分</span></button>
+              <button type="button">☀<strong>目を休める</strong><span>2分</span></button>
+            </div>
+          </section>
+
+          <section id="urgent-interrupt" className="timer-card timer-urgent-card">
+            <div className="timer-card__title-row">
+              <div>
+                <h2>緊急タスク割り込み</h2>
+                <p>突然入ったタスクを登録し、現在のタイマーを中断して開始できます。</p>
+              </div>
+            </div>
+
+            {interruptedTimerSnapshot && status === "stopped" && (
+              <div className="timer-interrupted-card">
+                <strong>中断中の元タスクがあります。</strong>
+                <span>経過時間 {formatElapsed(Math.floor(interruptedTimerSnapshot.elapsedBeforePauseMs / 1000))}</span>
+                <button type="button" onClick={handleResumeInterruptedTask} disabled={isSaving || isCreatingUrgentTask}>元タスクを再開</button>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateAndStartUrgentTask} className="timer-urgent-form">
+              <label>
+                緊急タスク名
+                <input value={urgentTitle} onChange={(e) => setUrgentTitle(e.target.value)} placeholder="例：急ぎの連絡対応" disabled={isCreatingUrgentTask || isSaving} />
+              </label>
+              <label>
+                割り込み理由
+                <textarea value={urgentInterruptionReason} onChange={(e) => setUrgentInterruptionReason(e.target.value)} placeholder="例：クライアントから至急確認依頼が来た" disabled={isCreatingUrgentTask || isSaving} />
+              </label>
+              <div className="timer-urgent-form__grid">
+                <label>見積分<input type="number" min="1" value={urgentEstimatedMinutes} onChange={(e) => setUrgentEstimatedMinutes(e.target.value)} disabled={isCreatingUrgentTask || isSaving} /></label>
+                <label>緊急度<input type="number" min="1" max="5" value={urgentUrgency} onChange={(e) => setUrgentUrgency(e.target.value)} disabled={isCreatingUrgentTask || isSaving} /></label>
+                <label>重要度<input type="number" min="1" max="5" value={urgentImportance} onChange={(e) => setUrgentImportance(e.target.value)} disabled={isCreatingUrgentTask || isSaving} /></label>
+                <label>エネルギー<select value={urgentEnergyLevel} onChange={(e) => setUrgentEnergyLevel(e.target.value)} disabled={isCreatingUrgentTask || isSaving}><option value="high">高集中</option><option value="medium">普通</option><option value="low">低め</option></select></label>
+              </div>
+              <label>
+                詳細メモ
+                <textarea value={urgentDescription} onChange={(e) => setUrgentDescription(e.target.value)} placeholder="緊急タスクの内容を書く" disabled={isCreatingUrgentTask || isSaving} />
+              </label>
+              <button type="submit" className="timer-danger-button" disabled={!urgentTitle.trim() || isCreatingUrgentTask || isSaving}>
+                {isTimerActive ? "現在タスクを中断して緊急タスク開始" : "緊急タスク追加して開始"}
+              </button>
+            </form>
+          </section>
+        </div>
+      </div>
+
+      <p className="timer-footer-hint">💡 ヒント：タイマー設定から、集中時間や休憩時間をカスタマイズできます。</p>
     </section>
   );
+
 }
