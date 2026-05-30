@@ -30,3 +30,34 @@ async def ensure_work_logs_gap_task_column(db: AsyncSession) -> None:
 
     await db.execute(text("ALTER TABLE work_logs ADD COLUMN gap_task_id INTEGER"))
     await db.commit()
+
+
+async def ensure_tasks_urgent_columns(db: AsyncSession) -> None:
+    """既存DBにも緊急タスク用の列を追加する軽量マイグレーション。"""
+    result = await db.execute(text("PRAGMA table_info(tasks)"))
+    column_names = {row[1] for row in result.fetchall()}
+
+    statements: list[str] = []
+
+    if "task_type" not in column_names:
+        statements.append(
+            "ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'normal'"
+        )
+
+    if "urgency" not in column_names:
+        statements.append("ALTER TABLE tasks ADD COLUMN urgency INTEGER")
+
+    if "importance" not in column_names:
+        statements.append("ALTER TABLE tasks ADD COLUMN importance INTEGER")
+
+    if "occurred_at" not in column_names:
+        statements.append("ALTER TABLE tasks ADD COLUMN occurred_at DATETIME")
+
+    if "interruption_reason" not in column_names:
+        statements.append("ALTER TABLE tasks ADD COLUMN interruption_reason TEXT")
+
+    for statement in statements:
+        await db.execute(text(statement))
+
+    if statements:
+        await db.commit()
