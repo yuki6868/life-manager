@@ -4,6 +4,10 @@ import { fetchCalendarEvents } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 
 const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
+const START_HOUR = 5;
+const END_HOUR = 24;
+const HOUR_HEIGHT = 72;
+const TIMELINE_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
 
 function toDateKey(date: Date) {
   const offsetMs = date.getTimezoneOffset() * 60 * 1000;
@@ -37,6 +41,32 @@ function formatMinutes(minutes: number) {
   return `${hours}時間${rest}分`;
 }
 
+function getTimelineTop(dateText: string) {
+  const date = new Date(dateText);
+  const minutes = (date.getHours() - START_HOUR) * 60 + date.getMinutes();
+  return Math.max(0, Math.min(TIMELINE_HEIGHT, (minutes / 60) * HOUR_HEIGHT));
+}
+
+function getTimelineHeight(event: CalendarEvent) {
+  return Math.max(34, (getMinutes(event) / 60) * HOUR_HEIGHT);
+}
+
+function getCurrentTimeTop(weekStart: Date) {
+  const now = new Date();
+  const start = new Date(weekStart);
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 7);
+
+  if (now < start || now >= end || now.getHours() < START_HOUR || now.getHours() >= END_HOUR) {
+    return null;
+  }
+
+  return {
+    dayIndex: (now.getDay() + 6) % 7,
+    top: getTimelineTop(now.toISOString()),
+  };
+}
+
 export default function WeekCalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
@@ -68,6 +98,8 @@ export default function WeekCalendarPage() {
   }), [events, weekStart]);
 
   const weeklyMinutes = days.reduce((total, day) => total + day.events.reduce((sum, event) => sum + getMinutes(event), 0), 0);
+  const currentTime = getCurrentTimeTop(weekStart);
+  const hours = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index);
 
   function moveWeek(amount: number) {
     const next = new Date(weekStart);
@@ -81,7 +113,7 @@ export default function WeekCalendarPage() {
         <div>
           <p className="calendar-toolbar__eyebrow">Weekly timeline</p>
           <h1 className="calendar-toolbar__title">週表示</h1>
-          <p className="calendar-toolbar__description">1週間の予定量を確認できます。予定の追加・編集は日表示で行います。</p>
+          <p className="calendar-toolbar__description">1週間の予定を時間軸で確認できます。予定の追加・編集は日表示で行います。</p>
         </div>
         <div className="calendar-toolbar__actions">
           <button type="button" className="calendar-icon-button" onClick={() => moveWeek(-1)}>‹</button>
@@ -97,20 +129,55 @@ export default function WeekCalendarPage() {
       </div>
 
       {isLoading ? <p className="dashboard-state-message">読み込み中...</p> : (
-        <div className="week-grid">
-          {days.map((day, index) => (
-            <section key={day.key} className="week-day-card">
-              <h2>{WEEKDAYS[index]} <span>{day.key.slice(5)}</span></h2>
-              {day.events.length === 0 ? (
-                <p className="calendar-empty">予定なし</p>
-              ) : day.events.map((event) => (
-                <article key={event.id} className="week-event-card">
-                  <strong>{event.title}</strong>
-                  <span>{formatTime(event.start_time)} - {formatTime(event.end_time)}</span>
-                </article>
+        <div className="week-timeline-shell">
+          <div className="week-timeline-header">
+            <div className="week-timeline-time-header">時間</div>
+            {days.map((day, index) => (
+              <Link key={day.key} className="week-timeline-day-header" to={`/calendar?date=${day.key}`}>
+                <strong>{WEEKDAYS[index]}</strong>
+                <span>{day.key.slice(5)}</span>
+              </Link>
+            ))}
+          </div>
+
+          <div className="week-timeline-body" style={{ minHeight: TIMELINE_HEIGHT }}>
+            <div className="week-timeline-hours" aria-hidden="true">
+              {hours.map((hour) => (
+                <div key={hour} className="week-timeline-hour-label" style={{ top: (hour - START_HOUR) * HOUR_HEIGHT }}>
+                  {String(hour).padStart(2, "0")}:00
+                </div>
               ))}
-            </section>
-          ))}
+            </div>
+
+            <div className="week-timeline-days">
+              {days.map((day, index) => (
+                <div key={day.key} className="week-timeline-day" style={{ minHeight: TIMELINE_HEIGHT }}>
+                  {hours.slice(0, -1).map((hour) => (
+                    <div key={hour} className="week-timeline-hour-line" style={{ top: (hour - START_HOUR) * HOUR_HEIGHT }} />
+                  ))}
+
+                  {currentTime?.dayIndex === index ? (
+                    <div className="week-current-time-line" style={{ top: currentTime.top }} />
+                  ) : null}
+
+                  {day.events.length === 0 ? (
+                    <div className="week-timeline-empty">予定なし</div>
+                  ) : day.events.map((event) => (
+                    <Link
+                      key={event.id}
+                      className={`week-timeline-event week-timeline-event--${event.status}`}
+                      style={{ top: getTimelineTop(event.start_time), height: getTimelineHeight(event) }}
+                      to={`/calendar?date=${day.key}`}
+                      title={`${event.title} ${formatTime(event.start_time)} - ${formatTime(event.end_time)}`}
+                    >
+                      <strong>{event.title}</strong>
+                      <span>{formatTime(event.start_time)} - {formatTime(event.end_time)}</span>
+                    </Link>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </section>
