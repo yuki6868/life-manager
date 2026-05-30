@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchCalendarEvents } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
-import { fetchTodaySummary } from "../api/dashboard";
-import type { TodaySummary } from "../api/dashboard";
+import { fetchTodaySummary, fetchUrgentTaskAnalysis } from "../api/dashboard";
+import type { TodaySummary, UrgentTaskAnalysis } from "../api/dashboard";
 import { fetchEstimationAccuracySummary } from "../api/estimations";
 import type { EstimationAccuracySummary } from "../api/estimations";
 import { fetchProjects } from "../api/projects";
@@ -119,6 +119,8 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [estimationAccuracy, setEstimationAccuracy] =
     useState<EstimationAccuracySummary | null>(null);
+  const [urgentTaskAnalysis, setUrgentTaskAnalysis] =
+    useState<UrgentTaskAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -127,20 +129,28 @@ export default function DashboardPage() {
     setErrorMessage("");
 
     try {
-      const [summaryData, eventData, projectData, taskData, accuracyData] =
-        await Promise.all([
-          fetchTodaySummary(),
-          fetchCalendarEvents(),
-          fetchProjects(),
-          fetchTasks(),
-          fetchEstimationAccuracySummary(),
-        ]);
+      const [
+        summaryData,
+        eventData,
+        projectData,
+        taskData,
+        accuracyData,
+        urgentAnalysisData,
+      ] = await Promise.all([
+        fetchTodaySummary(),
+        fetchCalendarEvents(),
+        fetchProjects(),
+        fetchTasks(),
+        fetchEstimationAccuracySummary(),
+        fetchUrgentTaskAnalysis(),
+      ]);
 
       setSummary(summaryData);
       setCalendarEvents(eventData);
       setProjects(projectData);
       setTasks(taskData);
       setEstimationAccuracy(accuracyData);
+      setUrgentTaskAnalysis(urgentAnalysisData);
     } catch (error) {
       console.error(error);
       setErrorMessage("ダッシュボードの取得に失敗しました。");
@@ -299,6 +309,14 @@ export default function DashboardPage() {
             <SummaryCard
               label="過小見積率"
               value={`${estimationAccuracy?.underestimation_rate ?? 0}%`}
+            />
+            <SummaryCard
+              label="緊急タスク件数"
+              value={`${urgentTaskAnalysis?.urgent_task_count ?? 0}件`}
+            />
+            <SummaryCard
+              label="緊急対応時間"
+              value={formatMinutes(urgentTaskAnalysis?.urgent_actual_minutes ?? 0)}
             />
           </div>
 
@@ -488,6 +506,51 @@ export default function DashboardPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="緊急タスク分析">
+              {!urgentTaskAnalysis || urgentTaskAnalysis.urgent_task_count === 0 ? (
+                <p>直近30日間の緊急タスクはまだありません。</p>
+              ) : (
+                <div style={{ display: "grid", gap: "14px" }}>
+                  <div style={itemStyle}>
+                    <strong>計画崩壊要因</strong>
+                    <p style={mutedTextStyle}>
+                      直近{urgentTaskAnalysis.days}日間で、緊急タスク
+                      {urgentTaskAnalysis.urgent_task_count}件 / 実行ログ
+                      {urgentTaskAnalysis.urgent_work_log_count}件 / 緊急対応時間
+                      {formatMinutes(urgentTaskAnalysis.urgent_actual_minutes)}
+                    </p>
+                    <p style={mutedTextStyle}>
+                      予定時間 {formatMinutes(urgentTaskAnalysis.planned_minutes)} に対して、
+                      緊急対応が {urgentTaskAnalysis.plan_collapse_rate}% を占めています。
+                    </p>
+                    <p style={mutedTextStyle}>
+                      未完了 {urgentTaskAnalysis.active_urgent_task_count}件 / 完了
+                      {urgentTaskAnalysis.completed_urgent_task_count}件
+                    </p>
+                  </div>
+
+                  <div style={itemStyle}>
+                    <strong>割り込み理由別</strong>
+                    {urgentTaskAnalysis.interruption_reasons.length === 0 ? (
+                      <p style={mutedTextStyle}>理由別に集計できるデータがありません。</p>
+                    ) : (
+                      <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                        {urgentTaskAnalysis.interruption_reasons.map((reason) => (
+                          <div key={reason.reason}>
+                            <p style={{ margin: 0 }}>{reason.reason}</p>
+                            <p style={mutedTextStyle}>
+                              {reason.urgent_task_count}件 /
+                              {formatMinutes(reason.actual_minutes)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

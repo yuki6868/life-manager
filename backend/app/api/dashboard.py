@@ -13,6 +13,8 @@ from app.schemas.dashboard import (
     MonthlyActualResponse,
     ProjectTimeAllocationResponse,
     TodaySummaryResponse,
+    UrgentInterruptionReasonResponse,
+    UrgentTaskAnalysisResponse,
     WeeklyActualResponse,
 )
 
@@ -220,3 +222,114 @@ async def get_project_time_allocation(
         )
         for row in rows
     ]
+
+
+@router.get("/urgent-task-analysis", response_model=UrgentTaskAnalysisResponse)
+async def get_urgent_task_analysis(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+):
+    days = max(1, min(days, 366))
+    start_at = to_datetime_start(date.today() - timedelta(days=days - 1))
+
+    urgent_task_count_result = await db.execute(
+        select(func.count(Task.id))
+        .where(Task.task_type == "urgent")
+        .where(func.coalesce(Task.occurred_at, Task.created_at) >= start_at)
+    )
+    urgent_task_count = int(urgent_task_count_result.scalar_one() or 0)
+
+    active_urgent_task_count_result = await db.execute(
+        select(func.count(Task.id))
+        .where(Task.task_type == "urgent")
+        .where(func.coalesce(Task.occurred_at, Task.created_at) >= start_at)
+        .where(Task.status.notin_(["completed", "cancelled", "archived"]))
+    )
+    active_urgent_task_count = int(active_urgent_task_count_result.scalar_one() or 0)
+
+    completed_urgent_task_count_result = await db.execute(
+        select(func.count(Task.id))
+        .where(Task.task_type == "urgent")
+        .where(func.coalesce(Task.occurred_at, Task.created_at) >= start_at)
+        .where(Task.status == "completed")
+    )
+    completed_urgent_task_count = int(completed_urgent_task_count_result.scalar_one() or 0)
+
+    urgent_work_log_result = await db.execute(
+        select(
+            func.count(WorkLog.id).label("work_log_count"),
+            func.coalesce(func.sum(WorkLog.duration_minutes), 0).label("actual_minutes"),
+        )
+        .select_from(WorkLog)
+        .join(Task, WorkLog.task_id == Task.id)
+        .where(Task.task_type == "urgent")
+        .where(WorkLog.started_at >= start_at)
+    )
+    urgent_work_log_row = urgent_work_log_result.one()
+    urgent_work_log_count = int(urgent_work_log_row.work_log_count or 0)
+    urgent_actual_minutes = int(urgent_work_log_row.actual_minutes or 0)
+
+    planned_result = await db.execute(
+        select(
+            func.coalesce(
+                func.sum(
+                    (
+                        func.strftime("%s", CalendarEvent.end_time)
+                        - func.strftime("%s", CalendarEvent.start_time)
+                    ) / 60
+                ),
+                0,
+            )
+        )
+        .where(CalendarEvent.status != "cancelled")
+        .where(CalendarEvent.start_time >= start_at)
+    )
+    planned_minutes = int(planned_result.scalar_one() or 0)
+    plan_collapse_rate = (
+        round((urgent_actual_minutes / planned_minutes) * 100, 1)
+        if planned_minutes > 0
+        else 0.0
+    )
+
+    reason_label = func.coalesce(
+        func.nullif(Task.interruption_reason, ""),
+        "理由未入力",
+    )
+    reason_result = await db.execute(
+        select(
+            reason_label.label("reason"),
+            func.count(func.distinct(Task.id)).label("urgent_task_count"),
+            func.coalesce(func.sum(WorkLog.duration_minutes), 0).label("actual_minutes"),
+        )
+        .select_from(Task)
+        .outerjoin(WorkLog, WorkLog.task_id == Task.id)
+        .where(Task.task_type == "urgent")
+        .where(func.coalesce(Task.occurred_at, Task.created_at) >= start_at)
+        .group_by(reason_label)
+        .order_by(
+            func.coalesce(func.sum(WorkLog.duration_minutes), 0).desc(),
+            func.count(func.distinct(Task.id)).desc(),
+        )
+        .limit(5)
+    )
+
+    interruption_reasons = [
+        UrgentInterruptionReasonResponse(
+            reason=row.reason,
+            urgent_task_count=int(row.urgent_task_count or 0),
+            actual_minutes=int(row.actual_minutes or 0),
+        )
+        for row in reason_result.all()
+    ]
+
+    return UrgentTaskAnalysisResponse(
+        days=days,
+        urgent_task_count=urgent_task_count,
+        urgent_work_log_count=urgent_work_log_count,
+        urgent_actual_minutes=urgent_actual_minutes,
+        planned_minutes=planned_minutes,
+        plan_collapse_rate=plan_collapse_rate,
+        active_urgent_task_count=active_urgent_task_count,
+        completed_urgent_task_count=completed_urgent_task_count,
+        interruption_reasons=interruption_reasons,
+    )
