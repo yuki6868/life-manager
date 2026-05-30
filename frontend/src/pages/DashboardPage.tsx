@@ -156,6 +156,18 @@ function formatMinutes(minutes: number) {
   return `${hours}時間${restMinutes}分`;
 }
 
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function achievementMessage(rate: number) {
+  if (rate >= 100) return "予定分をしっかり達成できています。";
+  if (rate >= 70) return "かなり良いペースです。あと少し進められます。";
+  if (rate >= 40) return "まだ伸ばせます。次の一手を小さく決めましょう。";
+  return "まずは短い作業から始めると立て直しやすいです。";
+}
+
 function getEventMinutes(event: CalendarEvent) {
   const start = new Date(event.start_time);
   const end = new Date(event.end_time);
@@ -444,124 +456,124 @@ export default function DashboardPage() {
     );
   }, [assistantSuggestions, dismissedSuggestionIds]);
 
+  const achievementRate = clampPercent(summary?.achievement_rate ?? 0);
+  const urgentCollapseRate = clampPercent(urgentTaskAnalysis?.plan_collapse_rate ?? 0);
+
   return (
-    <section style={{ padding: "32px", borderTop: "1px solid #ddd" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: "16px",
-        }}
-      >
+    <section className="dashboard-page">
+      <div className="dashboard-hero">
         <div>
-          <h1>ダッシュボード</h1>
-          <p style={{ color: "#666" }}>
+          <p className="dashboard-hero__eyebrow">Today Overview</p>
+          <h1 className="dashboard-hero__title">ダッシュボード</h1>
+          <p className="dashboard-hero__description">
             今日の予定、実績、進行中タスク、未完了予定をまとめて確認します。
           </p>
         </div>
         <button
           type="button"
+          className="dashboard-refresh-button"
           onClick={loadData}
           disabled={isLoading}
-          style={{ height: "40px" }}
         >
-          再読み込み
+          {isLoading ? "更新中..." : "再読み込み"}
         </button>
       </div>
 
-      {isLoading && <p>読み込み中...</p>}
-      {errorMessage && <p style={{ color: "#b00020" }}>{errorMessage}</p>}
+      {isLoading && <p className="dashboard-state-message">読み込み中...</p>}
+      {errorMessage && <p className="dashboard-error-message">{errorMessage}</p>}
 
       {!isLoading && !errorMessage && (
         <>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: "16px",
-              margin: "24px 0",
-            }}
-          >
-            <SummaryCard
-              label="今日の予定時間"
-              value={formatMinutes(summary?.planned_minutes ?? 0)}
-            />
-            <SummaryCard
-              label="今日の実績時間"
-              value={formatMinutes(summary?.actual_minutes ?? 0)}
-            />
-            <SummaryCard
-              label="達成率"
-              value={`${summary?.achievement_rate ?? 0}%`}
-            />
-            <SummaryCard
-              label="未完了予定"
-              value={`${summary?.incomplete_events_count ?? incompleteEvents.length}件`}
-            />
-            <SummaryCard
-              label="過小見積率"
-              value={`${estimationAccuracy?.underestimation_rate ?? 0}%`}
-            />
-            <SummaryCard
-              label="緊急タスク件数"
-              value={`${urgentTaskAnalysis?.urgent_task_count ?? 0}件`}
-            />
-            <SummaryCard
-              label="緊急対応時間"
-              value={formatMinutes(urgentTaskAnalysis?.urgent_actual_minutes ?? 0)}
-            />
+          <div className="dashboard-top-grid">
+            <div className="dashboard-achievement-card">
+              <div>
+                <p className="dashboard-card-label">今日の達成率</p>
+                <strong className="dashboard-achievement-card__value">
+                  {achievementRate}%
+                </strong>
+                <p className="dashboard-achievement-card__message">
+                  {achievementMessage(achievementRate)}
+                </p>
+              </div>
+              <ProgressBar
+                value={achievementRate}
+                label={`今日の達成率 ${achievementRate}%`}
+                size="large"
+              />
+              <div className="dashboard-achievement-card__meta">
+                <span>予定 {formatMinutes(summary?.planned_minutes ?? 0)}</span>
+                <span>実績 {formatMinutes(summary?.actual_minutes ?? 0)}</span>
+              </div>
+            </div>
+
+            <div className="dashboard-summary-grid">
+              <SummaryCard
+                label="今日の予定時間"
+                value={formatMinutes(summary?.planned_minutes ?? 0)}
+                icon="📅"
+                tone="blue"
+              />
+              <SummaryCard
+                label="今日の実績時間"
+                value={formatMinutes(summary?.actual_minutes ?? 0)}
+                icon="⏱️"
+                tone="green"
+              />
+              <SummaryCard
+                label="未完了予定"
+                value={`${summary?.incomplete_events_count ?? incompleteEvents.length}件`}
+                icon="⚠️"
+                tone="amber"
+              />
+              <SummaryCard
+                label="過小見積率"
+                value={`${estimationAccuracy?.underestimation_rate ?? 0}%`}
+                icon="📏"
+                tone="purple"
+              />
+              <SummaryCard
+                label="緊急タスク件数"
+                value={`${urgentTaskAnalysis?.urgent_task_count ?? 0}件`}
+                icon="🚨"
+                tone="rose"
+              />
+              <SummaryCard
+                label="緊急対応時間"
+                value={formatMinutes(urgentTaskAnalysis?.urgent_actual_minutes ?? 0)}
+                icon="🔥"
+                tone="orange"
+              />
+            </div>
           </div>
 
-
-
-          <DashboardPanel title="秘書提案">
+          <DashboardPanel title="秘書提案" description="今の状況から、次に取りやすい行動を提案します。">
             {assistantMessage && (
-              <p style={{ ...mutedTextStyle, color: "#2563eb" }}>
-                {assistantMessage}
-              </p>
+              <p className="dashboard-info-message">{assistantMessage}</p>
             )}
 
             {visibleAssistantSuggestions.length === 0 ? (
-              <p>今すぐ表示する提案はありません。</p>
+              <p className="dashboard-empty-message">今すぐ表示する提案はありません。</p>
             ) : (
-              <div style={{ display: "grid", gap: "12px" }}>
+              <div className="dashboard-list dashboard-list--suggestions">
                 {visibleAssistantSuggestions.map((suggestion) => (
-                  <div key={suggestion.id} style={itemStyle}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: "12px",
-                      }}
-                    >
+                  <div key={suggestion.id} className="dashboard-item dashboard-item--suggestion">
+                    <div className="dashboard-item__header">
                       <strong>{suggestion.title}</strong>
                       <span
-                        style={{
-                          ...priorityBadgeStyle(suggestion.priority),
-                          borderRadius: "999px",
-                          padding: "2px 8px",
-                          fontSize: "12px",
-                          whiteSpace: "nowrap",
-                        }}
+                        style={priorityBadgeStyle(suggestion.priority)}
+                        className="dashboard-priority-badge"
                       >
                         {priorityLabel(suggestion.priority)}
                       </span>
                     </div>
-                    <p style={mutedTextStyle}>{suggestion.message}</p>
+                    <p className="dashboard-muted-text">{suggestion.message}</p>
 
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "8px",
-                        marginTop: "12px",
-                      }}
-                    >
+                    <div className="dashboard-actions">
                       {suggestion.suggestion_type ===
                       "move_incomplete_event_tomorrow" ? (
                         <button
                           type="button"
+                          className="dashboard-primary-button"
                           onClick={() =>
                             handleAddSuggestionToCalendar(suggestion)
                           }
@@ -572,6 +584,7 @@ export default function DashboardPage() {
                       ) : isSchedulableSuggestion(suggestion) ? (
                         <button
                           type="button"
+                          className="dashboard-primary-button"
                           onClick={() =>
                             handleAddSuggestionToCalendar(suggestion)
                           }
@@ -583,6 +596,7 @@ export default function DashboardPage() {
 
                       <button
                         type="button"
+                        className="dashboard-secondary-button"
                         onClick={() => handleDismissSuggestion(suggestion.id)}
                         disabled={assistantActionId === suggestion.id}
                       >
@@ -595,29 +609,20 @@ export default function DashboardPage() {
             )}
           </DashboardPanel>
 
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: "16px",
-            }}
-          >
-            <DashboardPanel title="今日の予定">
+          <div className="dashboard-panels-grid">
+            <DashboardPanel title="今日の予定" description="今日の時間割と予定ステータスです。">
               {todayEvents.length === 0 ? (
-                <p>今日の予定はまだありません。</p>
+                <p className="dashboard-empty-message">今日の予定はまだありません。</p>
               ) : (
-                <div style={{ display: "grid", gap: "10px" }}>
+                <div className="dashboard-list">
                   {todayEvents.map((event) => (
-                    <div key={event.id} style={itemStyle}>
-                      <strong>{event.title}</strong>
-                      <p style={mutedTextStyle}>
-                        {formatTime(event.start_time)} -{" "}
-                        {formatTime(event.end_time)} /{" "}
-                        {formatMinutes(getEventMinutes(event))}
-                      </p>
-                      <p style={mutedTextStyle}>
-                        状態: {statusLabel(event.status)}
+                    <div key={event.id} className="dashboard-item">
+                      <div className="dashboard-item__header">
+                        <strong>{event.title}</strong>
+                        <span className="dashboard-status-pill">{statusLabel(event.status)}</span>
+                      </div>
+                      <p className="dashboard-muted-text">
+                        {formatTime(event.start_time)} - {formatTime(event.end_time)} / {formatMinutes(getEventMinutes(event))}
                       </p>
                     </div>
                   ))}
@@ -625,11 +630,11 @@ export default function DashboardPage() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="プロジェクト進捗">
+            <DashboardPanel title="プロジェクト進捗" description="予想・実績・残り工数を進捗バーで確認します。">
               {progressProjects.length === 0 ? (
-                <p>表示できるプロジェクトはありません。</p>
+                <p className="dashboard-empty-message">表示できるプロジェクトはありません。</p>
               ) : (
-                <div style={{ display: "grid", gap: "12px" }}>
+                <div className="dashboard-list">
                   {progressProjects.map((project) => {
                     const estimatedMinutes = getEffectiveProjectEstimatedMinutes(
                       project,
@@ -646,45 +651,23 @@ export default function DashboardPage() {
                     );
 
                     return (
-                      <div key={project.id} style={itemStyle}>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: "12px",
-                          }}
-                        >
+                      <div key={project.id} className="dashboard-item dashboard-item--progress">
+                        <div className="dashboard-item__header">
                           <strong>{project.title}</strong>
-                          <span style={{ color: "#2563eb", fontWeight: 700 }}>
-                            {progressRate}%
-                          </span>
+                          <span className="dashboard-progress-rate">{progressRate}%</span>
                         </div>
 
-                        <div
-                          aria-label={`${project.title}の進捗率 ${progressRate}%`}
-                          style={{
-                            height: "10px",
-                            background: "#e5e7eb",
-                            borderRadius: "999px",
-                            overflow: "hidden",
-                            marginTop: "10px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${progressRate}%`,
-                              height: "100%",
-                              background: "#2563eb",
-                            }}
-                          />
-                        </div>
+                        <ProgressBar
+                          value={progressRate}
+                          label={`${project.title}の進捗率 ${progressRate}%`}
+                        />
 
-                        <p style={mutedTextStyle}>
-                          予想 {formatMinutes(estimatedMinutes)} / 実績{" "}
-                          {formatMinutes(project.actual_minutes)} / 残り{" "}
-                          {formatMinutes(remainingMinutes)}
-                        </p>
-                        <p style={mutedTextStyle}>
+                        <div className="dashboard-metrics-row">
+                          <span>予想 {formatMinutes(estimatedMinutes)}</span>
+                          <span>実績 {formatMinutes(project.actual_minutes)}</span>
+                          <span>残り {formatMinutes(remainingMinutes)}</span>
+                        </div>
+                        <p className="dashboard-muted-text">
                           状態: {statusLabel(project.status)}
                         </p>
                       </div>
@@ -694,69 +677,57 @@ export default function DashboardPage() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="見積もり精度">
+            <DashboardPanel title="見積もり精度" description="予定時間と実績時間のズレを確認します。">
               {!estimationAccuracy ||
               estimationAccuracy.total_task_count === 0 ? (
-                <p>実績があるタスクがまだありません。</p>
+                <p className="dashboard-empty-message">実績があるタスクがまだありません。</p>
               ) : (
-                <div style={{ display: "grid", gap: "14px" }}>
-                  <div style={itemStyle}>
-                    <strong>予定時間と実績時間の差分</strong>
-                    <p style={mutedTextStyle}>
-                      平均予定{" "}
-                      {formatMinutes(
-                        estimationAccuracy.average_estimated_minutes,
-                      )}{" "}
-                      / 平均実績{" "}
-                      {formatMinutes(estimationAccuracy.average_actual_minutes)}{" "}
-                      / 差分{" "}
-                      {formatSignedMinutes(
-                        estimationAccuracy.average_difference_minutes,
-                      )}
+                <div className="dashboard-list">
+                  <div className="dashboard-item">
+                    <div className="dashboard-item__header">
+                      <strong>予定時間と実績時間の差分</strong>
+                      <span className="dashboard-status-pill">
+                        対象 {estimationAccuracy.total_task_count}件
+                      </span>
+                    </div>
+                    <div className="dashboard-estimation-bars">
+                      <MetricProgress
+                        label="過小見積"
+                        value={estimationAccuracy.underestimation_rate}
+                      />
+                      <MetricProgress
+                        label="適正"
+                        value={estimationAccuracy.accurate_estimation_rate}
+                      />
+                      <MetricProgress
+                        label="過大見積"
+                        value={estimationAccuracy.overestimation_rate}
+                      />
+                    </div>
+                    <p className="dashboard-muted-text">
+                      平均予定 {formatMinutes(estimationAccuracy.average_estimated_minutes)} / 平均実績 {formatMinutes(estimationAccuracy.average_actual_minutes)} / 差分 {formatSignedMinutes(estimationAccuracy.average_difference_minutes)}
                     </p>
-                    <p style={mutedTextStyle}>
-                      判定基準: ±
-                      {Math.round(
-                        estimationAccuracy.estimation_threshold_rate * 100,
-                      )}
-                      %以内は適正
-                    </p>
-                    <p style={mutedTextStyle}>
-                      過小見積率: {estimationAccuracy.underestimation_rate}% /
-                      適正率: {estimationAccuracy.accurate_estimation_rate}% /
-                      過大見積率: {estimationAccuracy.overestimation_rate}%
-                      （対象 {estimationAccuracy.total_task_count}件）
+                    <p className="dashboard-muted-text">
+                      判定基準: ±{Math.round(estimationAccuracy.estimation_threshold_rate * 100)}%以内は適正
                     </p>
                   </div>
 
-                  <div style={itemStyle}>
+                  <div className="dashboard-item">
                     <strong>タスク種別ごとの傾向</strong>
                     {estimationAccuracy.task_type_trends.length === 0 ? (
-                      <p style={mutedTextStyle}>
+                      <p className="dashboard-muted-text">
                         傾向を表示できるデータがありません。
                       </p>
                     ) : (
-                      <div
-                        style={{
-                          display: "grid",
-                          gap: "8px",
-                          marginTop: "8px",
-                        }}
-                      >
+                      <div className="dashboard-mini-list">
                         {estimationAccuracy.task_type_trends.map((trend) => (
-                          <div key={trend.task_type}>
-                            <p style={{ margin: 0 }}>
-                              {priorityLabel(trend.task_type)}: 過小 {trend.underestimation_rate}% /
-                              適正 {trend.accurate_estimation_rate}% / 過大 {trend.overestimation_rate}% /
-                              平均差分 {formatSignedMinutes(
-                                trend.average_difference_minutes,
-                              )}
+                          <div key={trend.task_type} className="dashboard-mini-list__item">
+                            <p>{priorityLabel(trend.task_type)}</p>
+                            <p className="dashboard-muted-text">
+                              過小 {trend.underestimation_rate}% / 適正 {trend.accurate_estimation_rate}% / 過大 {trend.overestimation_rate}% / 平均差分 {formatSignedMinutes(trend.average_difference_minutes)}
                             </p>
-                            <p style={mutedTextStyle}>
-                              {trend.task_count}件 / 平均予定{" "}
-                              {formatMinutes(trend.average_estimated_minutes)} /
-                              平均実績{" "}
-                              {formatMinutes(trend.average_actual_minutes)}
+                            <p className="dashboard-muted-text">
+                              {trend.task_count}件 / 平均予定 {formatMinutes(trend.average_estimated_minutes)} / 平均実績 {formatMinutes(trend.average_actual_minutes)}
                             </p>
                           </div>
                         ))}
@@ -764,20 +735,14 @@ export default function DashboardPage() {
                     )}
                   </div>
 
-                  <div style={itemStyle}>
+                  <div className="dashboard-item">
                     <strong>最近の見積もり差分</strong>
-                    <div
-                      style={{ display: "grid", gap: "8px", marginTop: "8px" }}
-                    >
+                    <div className="dashboard-mini-list">
                       {estimationAccuracy.recent_tasks.map((task) => (
-                        <div key={task.id}>
-                          <p style={{ margin: 0 }}>{task.title}</p>
-                          <p style={mutedTextStyle}>
-                            {task.project_title} / 予定{" "}
-                            {formatMinutes(task.estimated_minutes)} / 実績{" "}
-                            {formatMinutes(task.actual_minutes)} / 差分{" "}
-                            {formatSignedMinutes(task.difference_minutes)} / 判定{" "}
-                            {estimationJudgementLabel(task.estimation_judgement)}
+                        <div key={task.id} className="dashboard-mini-list__item">
+                          <p>{task.title}</p>
+                          <p className="dashboard-muted-text">
+                            {task.project_title} / 予定 {formatMinutes(task.estimated_minutes)} / 実績 {formatMinutes(task.actual_minutes)} / 差分 {formatSignedMinutes(task.difference_minutes)} / 判定 {estimationJudgementLabel(task.estimation_judgement)}
                           </p>
                         </div>
                       ))}
@@ -787,41 +752,42 @@ export default function DashboardPage() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="緊急タスク分析">
+            <DashboardPanel title="緊急タスク分析" description="割り込みによる計画崩れを見える化します。">
               {!urgentTaskAnalysis || urgentTaskAnalysis.urgent_task_count === 0 ? (
-                <p>直近30日間の緊急タスクはまだありません。</p>
+                <p className="dashboard-empty-message">直近30日間の緊急タスクはまだありません。</p>
               ) : (
-                <div style={{ display: "grid", gap: "14px" }}>
-                  <div style={itemStyle}>
-                    <strong>計画崩壊要因</strong>
-                    <p style={mutedTextStyle}>
-                      直近{urgentTaskAnalysis.days}日間で、緊急タスク
-                      {urgentTaskAnalysis.urgent_task_count}件 / 実行ログ
-                      {urgentTaskAnalysis.urgent_work_log_count}件 / 緊急対応時間
-                      {formatMinutes(urgentTaskAnalysis.urgent_actual_minutes)}
+                <div className="dashboard-list">
+                  <div className="dashboard-item">
+                    <div className="dashboard-item__header">
+                      <strong>計画崩壊要因</strong>
+                      <span className="dashboard-progress-rate">{urgentCollapseRate}%</span>
+                    </div>
+                    <ProgressBar
+                      value={urgentCollapseRate}
+                      label={`緊急対応による計画崩壊率 ${urgentCollapseRate}%`}
+                    />
+                    <p className="dashboard-muted-text">
+                      直近{urgentTaskAnalysis.days}日間で、緊急タスク{urgentTaskAnalysis.urgent_task_count}件 / 実行ログ{urgentTaskAnalysis.urgent_work_log_count}件 / 緊急対応時間{formatMinutes(urgentTaskAnalysis.urgent_actual_minutes)}
                     </p>
-                    <p style={mutedTextStyle}>
-                      予定時間 {formatMinutes(urgentTaskAnalysis.planned_minutes)} に対して、
-                      緊急対応が {urgentTaskAnalysis.plan_collapse_rate}% を占めています。
+                    <p className="dashboard-muted-text">
+                      予定時間 {formatMinutes(urgentTaskAnalysis.planned_minutes)} に対して、緊急対応が {urgentTaskAnalysis.plan_collapse_rate}% を占めています。
                     </p>
-                    <p style={mutedTextStyle}>
-                      未完了 {urgentTaskAnalysis.active_urgent_task_count}件 / 完了
-                      {urgentTaskAnalysis.completed_urgent_task_count}件
+                    <p className="dashboard-muted-text">
+                      未完了 {urgentTaskAnalysis.active_urgent_task_count}件 / 完了 {urgentTaskAnalysis.completed_urgent_task_count}件
                     </p>
                   </div>
 
-                  <div style={itemStyle}>
+                  <div className="dashboard-item">
                     <strong>割り込み理由別</strong>
                     {urgentTaskAnalysis.interruption_reasons.length === 0 ? (
-                      <p style={mutedTextStyle}>理由別に集計できるデータがありません。</p>
+                      <p className="dashboard-muted-text">理由別に集計できるデータがありません。</p>
                     ) : (
-                      <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                      <div className="dashboard-mini-list">
                         {urgentTaskAnalysis.interruption_reasons.map((reason) => (
-                          <div key={reason.reason}>
-                            <p style={{ margin: 0 }}>{reason.reason}</p>
-                            <p style={mutedTextStyle}>
-                              {reason.urgent_task_count}件 /
-                              {formatMinutes(reason.actual_minutes)}
+                          <div key={reason.reason} className="dashboard-mini-list__item">
+                            <p>{reason.reason}</p>
+                            <p className="dashboard-muted-text">
+                              {reason.urgent_task_count}件 / {formatMinutes(reason.actual_minutes)}
                             </p>
                           </div>
                         ))}
@@ -832,21 +798,19 @@ export default function DashboardPage() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="進行中タスク">
+            <DashboardPanel title="進行中タスク" description="現在動いているタスクと工数です。">
               {inProgressTasks.length === 0 ? (
-                <p>進行中タスクはありません。</p>
+                <p className="dashboard-empty-message">進行中タスクはありません。</p>
               ) : (
-                <div style={{ display: "grid", gap: "10px" }}>
+                <div className="dashboard-list">
                   {inProgressTasks.map((task) => (
-                    <div key={task.id} style={itemStyle}>
+                    <div key={task.id} className="dashboard-item">
                       <strong>{task.title}</strong>
-                      <p style={mutedTextStyle}>
-                        実績 {formatMinutes(task.actual_minutes)} / 見積{" "}
-                        {formatMinutes(task.estimated_minutes)}
+                      <p className="dashboard-muted-text">
+                        実績 {formatMinutes(task.actual_minutes)} / 見積 {formatMinutes(task.estimated_minutes)}
                       </p>
-                      <p style={mutedTextStyle}>
-                        優先度: {task.priority} / エネルギー:{" "}
-                        {task.energy_level}
+                      <p className="dashboard-muted-text">
+                        優先度: {task.priority} / エネルギー: {task.energy_level}
                       </p>
                     </div>
                   ))}
@@ -854,20 +818,19 @@ export default function DashboardPage() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="未完了予定">
+            <DashboardPanel title="未完了予定" description="今日中に残っている予定です。">
               {incompleteEvents.length === 0 ? (
-                <p>今日の未完了予定はありません。</p>
+                <p className="dashboard-empty-message">今日の未完了予定はありません。</p>
               ) : (
-                <div style={{ display: "grid", gap: "10px" }}>
+                <div className="dashboard-list">
                   {incompleteEvents.map((event) => (
-                    <div key={event.id} style={itemStyle}>
-                      <strong>{event.title}</strong>
-                      <p style={mutedTextStyle}>
-                        {formatTime(event.start_time)} -{" "}
-                        {formatTime(event.end_time)}
-                      </p>
-                      <p style={mutedTextStyle}>
-                        状態: {statusLabel(event.status)}
+                    <div key={event.id} className="dashboard-item">
+                      <div className="dashboard-item__header">
+                        <strong>{event.title}</strong>
+                        <span className="dashboard-status-pill">{statusLabel(event.status)}</span>
+                      </div>
+                      <p className="dashboard-muted-text">
+                        {formatTime(event.start_time)} - {formatTime(event.end_time)}
                       </p>
                     </div>
                   ))}
@@ -881,54 +844,85 @@ export default function DashboardPage() {
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
+function SummaryCard({
+  icon,
+  label,
+  tone = "blue",
+  value,
+}: {
+  icon: string;
+  label: string;
+  tone?: "blue" | "green" | "amber" | "purple" | "rose" | "orange";
+  value: string;
+}) {
   return (
-    <div
-      style={{
-        padding: "18px",
-        border: "1px solid #ddd",
-        borderRadius: "12px",
-        background: "#fff",
-      }}
-    >
-      <p style={{ margin: "0 0 8px", color: "#666", fontSize: "14px" }}>
-        {label}
-      </p>
-      <strong style={{ fontSize: "24px" }}>{value}</strong>
+    <div className={`dashboard-summary-card dashboard-summary-card--${tone}`}>
+      <span className="dashboard-summary-card__icon" aria-hidden="true">
+        {icon}
+      </span>
+      <div>
+        <p className="dashboard-card-label">{label}</p>
+        <strong className="dashboard-summary-card__value">{value}</strong>
+      </div>
     </div>
   );
 }
 
 function DashboardPanel({
   children,
+  description,
   title,
 }: {
   children: React.ReactNode;
+  description?: string;
   title: string;
 }) {
   return (
-    <section
-      style={{
-        padding: "20px",
-        border: "1px solid #ddd",
-        borderRadius: "12px",
-        background: "#fff",
-      }}
-    >
-      <h2 style={{ marginTop: 0 }}>{title}</h2>
+    <section className="dashboard-panel">
+      <div className="dashboard-panel__header">
+        <h2>{title}</h2>
+        {description && <p>{description}</p>}
+      </div>
       {children}
     </section>
   );
 }
 
-const itemStyle: React.CSSProperties = {
-  border: "1px solid #eee",
-  borderRadius: "10px",
-  padding: "12px",
-  background: "#fafafa",
-};
+function ProgressBar({
+  label,
+  size = "normal",
+  value,
+}: {
+  label: string;
+  size?: "normal" | "large";
+  value: number;
+}) {
+  const percent = clampPercent(value);
 
-const mutedTextStyle: React.CSSProperties = {
-  margin: "6px 0 0",
-  color: "#666",
-};
+  return (
+    <div
+      aria-label={label}
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={percent}
+      className={`dashboard-progress-bar dashboard-progress-bar--${size}`}
+      role="progressbar"
+    >
+      <div style={{ width: `${percent}%` }} />
+    </div>
+  );
+}
+
+function MetricProgress({ label, value }: { label: string; value: number }) {
+  const percent = clampPercent(value);
+
+  return (
+    <div className="dashboard-metric-progress">
+      <div className="dashboard-metric-progress__header">
+        <span>{label}</span>
+        <strong>{percent}%</strong>
+      </div>
+      <ProgressBar value={percent} label={`${label} ${percent}%`} />
+    </div>
+  );
+}
