@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine, AsyncSessionLocal
-from app.db.init_db import create_initial_user
+from app.db.init_db import create_initial_user, ensure_work_logs_gap_task_column
 
 import app.models
 from app.api.goals import router as goal_router
@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
+        await ensure_work_logs_gap_task_column(db)
         await create_initial_user(db)
 
     yield

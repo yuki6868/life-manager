@@ -21,6 +21,11 @@ class WorkLog(Base):
         nullable=True,
     )
 
+    gap_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gap_tasks.id"),
+        nullable=True,
+    )
+
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -46,3 +51,4 @@ class WorkLog(Base):
 
     task = relationship("Task")
     calendar_event = relationship("CalendarEvent")
+    gap_task = relationship("GapTask")

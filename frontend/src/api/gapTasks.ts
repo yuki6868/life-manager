@@ -12,6 +12,14 @@ export type GapTask = {
   updated_at: string;
 };
 
+export type GapTaskSuggestion = {
+  available_minutes: number;
+  next_event_id?: number | null;
+  next_event_title?: string | null;
+  next_event_start_time?: string | null;
+  suggested_tasks: GapTask[];
+};
+
 export type GapTaskInput = {
   title: string;
   description?: string;
@@ -23,6 +31,15 @@ export type GapTaskInput = {
 
 export async function fetchGapTasks(): Promise<GapTask[]> {
   const res = await apiClient.get("/gap-tasks/");
+  return res.data;
+}
+
+export async function fetchNextGapTaskSuggestions(
+  energyLevel?: string,
+): Promise<GapTaskSuggestion> {
+  const res = await apiClient.get("/gap-tasks/suggestions/next-gap", {
+    params: energyLevel ? { energy_level: energyLevel } : undefined,
+  });
   return res.data;
 }
 

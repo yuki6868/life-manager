@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.calendar_event import CalendarEvent
+from app.models.gap_task import GapTask
 from app.models.project import Project
 from app.models.task import Task
 from app.models.work_log import WorkLog
@@ -67,6 +68,22 @@ async def get_calendar_event_or_none(
     return event
 
 
+async def get_gap_task_or_none(
+    gap_task_id: int | None,
+    db: AsyncSession,
+) -> GapTask | None:
+    if gap_task_id is None:
+        return None
+
+    result = await db.execute(select(GapTask).where(GapTask.id == gap_task_id))
+    gap_task = result.scalar_one_or_none()
+
+    if gap_task is None:
+        raise HTTPException(status_code=404, detail="Gap task not found")
+
+    return gap_task
+
+
 def calculate_planned_minutes(event: CalendarEvent | None) -> int | None:
     if event is None:
         return None
@@ -78,6 +95,7 @@ def calculate_planned_minutes(event: CalendarEvent | None) -> int | None:
 def build_work_log_response(
     work_log: WorkLog,
     event: CalendarEvent | None = None,
+    gap_task: GapTask | None = None,
 ) -> WorkLogResponse:
     planned_minutes = calculate_planned_minutes(event)
     actual_minutes = work_log.duration_minutes
@@ -86,6 +104,7 @@ def build_work_log_response(
         id=work_log.id,
         task_id=work_log.task_id,
         calendar_event_id=work_log.calendar_event_id,
+        gap_task_id=work_log.gap_task_id,
         started_at=work_log.started_at,
         ended_at=work_log.ended_at,
         duration_minutes=work_log.duration_minutes,
@@ -98,6 +117,7 @@ def build_work_log_response(
             else None
         ),
         calendar_event_status=event.status if event is not None else None,
+        gap_task_status=gap_task.status if gap_task is not None else None,
     )
 
 
@@ -112,6 +132,34 @@ async def get_event_for_work_log(
         select(CalendarEvent).where(CalendarEvent.id == work_log.calendar_event_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_gap_task_for_work_log(
+    work_log: WorkLog,
+    db: AsyncSession,
+) -> GapTask | None:
+    if work_log.gap_task_id is None:
+        return None
+
+    result = await db.execute(
+        select(GapTask).where(GapTask.id == work_log.gap_task_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def update_gap_task_status_after_create(gap_task: GapTask | None) -> None:
+    if gap_task is None:
+        return
+
+    gap_task.status = "completed"
+
+
+def update_gap_task_status_after_delete(gap_task: GapTask | None) -> None:
+    if gap_task is None:
+        return
+
+    if gap_task.status == "completed":
+        gap_task.status = "todo"
 
 
 async def update_calendar_event_status_after_create(
@@ -198,7 +246,8 @@ async def get_work_logs(db: AsyncSession = Depends(get_db)):
 
     for work_log in work_logs:
         event = await get_event_for_work_log(work_log, db)
-        responses.append(build_work_log_response(work_log, event))
+        gap_task = await get_gap_task_for_work_log(work_log, db)
+        responses.append(build_work_log_response(work_log, event, gap_task))
 
     return responses
 
@@ -215,7 +264,8 @@ async def get_work_log(
         raise HTTPException(status_code=404, detail="Work log not found")
 
     event = await get_event_for_work_log(work_log, db)
-    return build_work_log_response(work_log, event)
+    gap_task = await get_gap_task_for_work_log(work_log, db)
+    return build_work_log_response(work_log, event, gap_task)
 
 
 @router.post("/", response_model=WorkLogResponse)
@@ -224,6 +274,7 @@ async def create_work_log(
     db: AsyncSession = Depends(get_db),
 ):
     event = await get_calendar_event_or_none(payload.calendar_event_id, db)
+    gap_task = await get_gap_task_or_none(payload.gap_task_id, db)
     task_id = payload.task_id
 
     if task_id is None and event is not None:
@@ -236,6 +287,7 @@ async def create_work_log(
     work_log = WorkLog(
         task_id=task_id,
         calendar_event_id=payload.calendar_event_id,
+        gap_task_id=payload.gap_task_id,
         started_at=payload.started_at,
         ended_at=payload.ended_at,
         duration_minutes=duration_minutes,
@@ -245,11 +297,12 @@ async def create_work_log(
     db.add(work_log)
     await add_actual_minutes_to_task_and_project(task, duration_minutes, db)
     await update_calendar_event_status_after_create(event)
+    update_gap_task_status_after_create(gap_task)
 
     await db.commit()
     await db.refresh(work_log)
 
-    return build_work_log_response(work_log, event)
+    return build_work_log_response(work_log, event, gap_task)
 
 
 @router.delete("/{work_log_id}")
@@ -263,8 +316,11 @@ async def delete_work_log(
     if work_log is None:
         raise HTTPException(status_code=404, detail="Work log not found")
 
+    gap_task = await get_gap_task_for_work_log(work_log, db)
+
     await subtract_actual_minutes_from_task_and_project(work_log, db)
     await update_calendar_event_status_after_delete(work_log, db)
+    update_gap_task_status_after_delete(gap_task)
     await db.delete(work_log)
     await db.commit()
 

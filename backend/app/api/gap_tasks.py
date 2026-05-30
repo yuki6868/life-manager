@@ -1,13 +1,17 @@
+from datetime import datetime, time, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.models.calendar_event import CalendarEvent
 from app.models.gap_task import GapTask
 from app.schemas.gap_task import (
     GapTaskCreate,
     GapTaskResponse,
     GapTaskStatusUpdate,
+    GapTaskSuggestionResponse,
     GapTaskUpdate,
 )
 
@@ -17,6 +21,17 @@ router = APIRouter(
 )
 
 GAP_TASK_STATUSES = {"todo", "in_progress", "completed", "paused", "cancelled"}
+
+
+PRIORITY_SCORE = {"high": 3, "medium": 2, "low": 1}
+
+
+def get_priority_score(gap_task: GapTask) -> int:
+    return PRIORITY_SCORE.get(gap_task.priority, 0)
+
+
+def end_of_today(now: datetime) -> datetime:
+    return datetime.combine(now.date() + timedelta(days=1), time.min)
 
 
 def validate_gap_task_status(status: str) -> None:
@@ -66,6 +81,64 @@ async def get_gap_tasks(
         )
     )
     return result.scalars().all()
+
+
+@router.get("/suggestions/next-gap", response_model=GapTaskSuggestionResponse)
+async def get_next_gap_task_suggestions(
+    energy_level: str | None = Query(default=None),
+    now: datetime | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """次の予定までに実行できるスキマタスクを返す。
+
+    - 現在時刻から次の予定開始までの空き時間を計算する
+    - required_minutes が空き時間以下のスキマタスクだけを抽出する
+    - 優先度が高い順、必要時間が短い順に並べる
+    """
+    current_time = now or datetime.now()
+
+    next_event_result = await db.execute(
+        select(CalendarEvent)
+        .where(CalendarEvent.status != "cancelled")
+        .where(CalendarEvent.start_time > current_time)
+        .order_by(CalendarEvent.start_time.asc())
+        .limit(1)
+    )
+    next_event = next_event_result.scalar_one_or_none()
+
+    if next_event is None:
+        next_event_start_time = None
+        available_minutes = max(0, int((end_of_today(current_time) - current_time).total_seconds() // 60))
+    else:
+        next_event_start_time = next_event.start_time
+        available_minutes = max(0, int((next_event.start_time - current_time).total_seconds() // 60))
+
+    query = (
+        select(GapTask)
+        .where(GapTask.status.in_(["todo", "paused"]))
+        .where(GapTask.required_minutes <= available_minutes)
+    )
+
+    if energy_level is not None:
+        query = query.where(GapTask.energy_level == energy_level)
+
+    gap_task_result = await db.execute(query)
+    suggested_tasks = sorted(
+        gap_task_result.scalars().all(),
+        key=lambda gap_task: (
+            -get_priority_score(gap_task),
+            gap_task.required_minutes,
+            -gap_task.id,
+        ),
+    )
+
+    return GapTaskSuggestionResponse(
+        available_minutes=available_minutes,
+        next_event_id=next_event.id if next_event else None,
+        next_event_title=next_event.title if next_event else None,
+        next_event_start_time=next_event_start_time,
+        suggested_tasks=suggested_tasks,
+    )
 
 
 @router.get("/{gap_task_id}", response_model=GapTaskResponse)

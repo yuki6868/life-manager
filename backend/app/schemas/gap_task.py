@@ -31,3 +31,11 @@ class GapTaskResponse(GapTaskBase):
 
     class Config:
         from_attributes = True
+
+
+class GapTaskSuggestionResponse(BaseModel):
+    available_minutes: int
+    next_event_id: int | None = None
+    next_event_title: str | None = None
+    next_event_start_time: datetime | None = None
+    suggested_tasks: list[GapTaskResponse]

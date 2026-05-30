@@ -4,6 +4,7 @@ export type WorkLog = {
   id: number;
   task_id?: number | null;
   calendar_event_id?: number | null;
+  gap_task_id?: number | null;
   started_at: string;
   ended_at: string;
   duration_minutes: number;
@@ -12,11 +13,13 @@ export type WorkLog = {
   actual_minutes?: number | null;
   difference_minutes?: number | null;
   calendar_event_status?: string | null;
+  gap_task_status?: string | null;
 };
 
 export type WorkLogInput = {
   task_id?: number | null;
   calendar_event_id?: number | null;
+  gap_task_id?: number | null;
   started_at: string;
   ended_at: string;
   duration_minutes?: number;
@@ -25,6 +28,7 @@ export type WorkLogInput = {
   actual_minutes?: number | null;
   difference_minutes?: number | null;
   calendar_event_status?: string | null;
+  gap_task_status?: string | null;
 };
 
 export async function createWorkLog(input: WorkLogInput): Promise<WorkLog> {
