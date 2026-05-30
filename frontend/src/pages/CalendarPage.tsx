@@ -36,6 +36,7 @@ const HOUR_HEIGHT = 96;
 const TIMELINE_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
 const SNAP_MINUTES = 15;
 const DEFAULT_TIMELINE_EVENT_MINUTES = 30;
+const EVENT_DRAG_THRESHOLD_PX = 6;
 
 const EVENT_STATUS_STYLES: Record<string, { background: string; border: string; color: string; label: string }> = {
   planned: { background: "#eef2ff", border: "#6366f1", color: "#3730a3", label: "予定" },
@@ -239,6 +240,14 @@ type DraggingCalendarEvent = {
   durationMinutes: number;
   previewStartMinute: number;
   previewEndMinute: number;
+  startClientY: number;
+  hasMoved: boolean;
+};
+
+type ResizingCalendarEvent = {
+  eventId: number;
+  startMinute: number;
+  previewEndMinute: number;
 };
 
 export default function CalendarPage() {
@@ -256,6 +265,10 @@ export default function CalendarPage() {
     useState<TimelineSelection | null>(null);
   const [draggingEvent, setDraggingEvent] =
     useState<DraggingCalendarEvent | null>(null);
+  const [resizingEvent, setResizingEvent] =
+    useState<ResizingCalendarEvent | null>(null);
+  const [selectedEventDetail, setSelectedEventDetail] =
+    useState<CalendarEvent | null>(null);
   const [timelineMessage, setTimelineMessage] = useState("");
 
   const [title, setTitle] = useState("");
@@ -421,6 +434,7 @@ export default function CalendarPage() {
   }
 
   function handleEdit(event: CalendarEvent) {
+    setSelectedEventDetail(null);
     setEditingEvent(event);
     setTitle(event.title);
     setDescription(event.description ?? "");
@@ -431,6 +445,23 @@ export default function CalendarPage() {
 
   async function handleDelete(id: number) {
     await deleteCalendarEvent(id);
+    setSelectedEventDetail(null);
+    if (editingEvent?.id === id) {
+      resetForm();
+    }
+    await loadData();
+  }
+
+  async function handleUpdateEventStatus(event: CalendarEvent, status: string) {
+    await updateCalendarEvent(event.id, {
+      task_id: event.task_id ?? null,
+      title: event.title,
+      description: event.description ?? "",
+      start_time: event.start_time,
+      end_time: event.end_time,
+      status,
+    });
+    setSelectedEventDetail(null);
     await loadData();
   }
 
@@ -624,7 +655,27 @@ export default function CalendarPage() {
   }
 
   function handlePlanTimelineMouseMove(e: MouseEvent<HTMLDivElement>) {
+    if (resizingEvent) {
+      const minute = getPointerDayMinute(e, e.currentTarget);
+      const minEndMinute = resizingEvent.startMinute + SNAP_MINUTES;
+      const maxMinute = END_HOUR * 60;
+
+      setResizingEvent({
+        ...resizingEvent,
+        previewEndMinute: clamp(minute, minEndMinute, maxMinute),
+      });
+      return;
+    }
+
     if (draggingEvent) {
+      const movedEnough =
+        draggingEvent.hasMoved ||
+        Math.abs(e.clientY - draggingEvent.startClientY) >= EVENT_DRAG_THRESHOLD_PX;
+
+      if (!movedEnough) {
+        return;
+      }
+
       const minute = getPointerDayMinute(e, e.currentTarget);
       const minMinute = START_HOUR * 60;
       const maxMinute = END_HOUR * 60;
@@ -634,8 +685,13 @@ export default function CalendarPage() {
         maxMinute - draggingEvent.durationMinutes
       );
 
+      if (!draggingEvent.hasMoved) {
+        setTimelineMessage("");
+      }
+
       setDraggingEvent({
         ...draggingEvent,
+        hasMoved: true,
         previewStartMinute: nextStartMinute,
         previewEndMinute: nextStartMinute + draggingEvent.durationMinutes,
       });
@@ -651,10 +707,42 @@ export default function CalendarPage() {
   }
 
   async function handlePlanTimelineMouseUp() {
+    if (resizingEvent) {
+      const targetEvent = events.find((event) => event.id === resizingEvent.eventId);
+      if (!targetEvent) {
+        setResizingEvent(null);
+        return;
+      }
+
+      const end = toSelectedDateTimeValue(selectedDate, resizingEvent.previewEndMinute);
+      setResizingEvent(null);
+
+      await updateCalendarEvent(targetEvent.id, {
+        task_id: targetEvent.task_id ?? null,
+        title: targetEvent.title,
+        description: targetEvent.description ?? "",
+        start_time: targetEvent.start_time,
+        end_time: end,
+        status: targetEvent.status,
+      });
+
+      setTimelineMessage(
+        `「${targetEvent.title}」の終了時刻を ${end.slice(11, 16)} に変更しました。`
+      );
+      await loadData();
+      return;
+    }
+
     if (draggingEvent) {
       const targetEvent = events.find((event) => event.id === draggingEvent.eventId);
       if (!targetEvent) {
         setDraggingEvent(null);
+        return;
+      }
+
+      if (!draggingEvent.hasMoved) {
+        setDraggingEvent(null);
+        setSelectedEventDetail(targetEvent);
         return;
       }
 
@@ -696,6 +784,7 @@ export default function CalendarPage() {
   }
 
   function handlePlanTimelineMouseLeave() {
+    if (draggingEvent || resizingEvent) return;
     if (!timelineSelection) return;
     setTimelineSelection(null);
   }
@@ -704,6 +793,12 @@ export default function CalendarPage() {
     e: MouseEvent<HTMLDivElement>,
     event: CalendarEvent
   ) {
+    if ((e.target as HTMLElement).closest("[data-calendar-resize-handle='true']")) {
+      return;
+    }
+    if ((e.target as HTMLElement).closest("button")) {
+      return;
+    }
     const timelineElement = e.currentTarget.parentElement;
     if (!(timelineElement instanceof HTMLDivElement)) return;
 
@@ -715,13 +810,32 @@ export default function CalendarPage() {
     const eventEndMinute = getDayMinute(event.end_time);
     const durationMinutes = getDurationMinutes(event.start_time, event.end_time);
 
-    setTimelineMessage("");
     setDraggingEvent({
       eventId: event.id,
       pointerOffsetMinutes: clamp(pointerMinute - eventStartMinute, 0, durationMinutes),
       durationMinutes,
       previewStartMinute: eventStartMinute,
       previewEndMinute: eventEndMinute,
+      startClientY: e.clientY,
+      hasMoved: false,
+    });
+  }
+
+  function handleEventResizeStart(
+    e: MouseEvent<HTMLDivElement>,
+    event: CalendarEvent
+  ) {
+    const timelineElement = e.currentTarget.closest(".calendar-lane__body");
+    if (!(timelineElement instanceof HTMLDivElement)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    setTimelineMessage("");
+    setResizingEvent({
+      eventId: event.id,
+      startMinute: getDayMinute(event.start_time),
+      previewEndMinute: getDayMinute(event.end_time),
     });
   }
 
@@ -864,10 +978,13 @@ export default function CalendarPage() {
                   const previewStartTime = draggingEvent?.eventId === event.id
                     ? toSelectedDateTimeValue(selectedDate, draggingEvent.previewStartMinute)
                     : event.start_time;
-                  const previewEndTime = draggingEvent?.eventId === event.id
-                    ? toSelectedDateTimeValue(selectedDate, draggingEvent.previewEndMinute)
-                    : event.end_time;
+                  const previewEndTime = resizingEvent?.eventId === event.id
+                    ? toSelectedDateTimeValue(selectedDate, resizingEvent.previewEndMinute)
+                    : draggingEvent?.eventId === event.id
+                      ? toSelectedDateTimeValue(selectedDate, draggingEvent.previewEndMinute)
+                      : event.end_time;
                   const isDragging = draggingEvent?.eventId === event.id;
+                  const isResizing = resizingEvent?.eventId === event.id;
                   const top = getTimelineTop(previewStartTime);
                   const height = getTimelineHeight(previewStartTime, previewEndTime);
                   const plannedMinutes = getDurationMinutes(previewStartTime, previewEndTime);
@@ -881,8 +998,12 @@ export default function CalendarPage() {
                     <div
                       key={event.id}
                       data-calendar-event-card="true"
-                      className={isDragging ? "calendar-event-card calendar-event-card--dragging" : "calendar-event-card"}
+                      className={isDragging || isResizing ? "calendar-event-card calendar-event-card--dragging" : "calendar-event-card"}
                       onMouseDown={(e) => handleEventDragStart(e, event)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!draggingEvent && !resizingEvent) setSelectedEventDetail(event);
+                      }}
                       style={{
                         top: `${top}px`,
                         height: `${height}px`,
@@ -919,6 +1040,12 @@ export default function CalendarPage() {
                         <button type="button" onClick={() => handleEdit(event)}>編集</button>
                         <button type="button" onClick={() => handleDelete(event.id)}>削除</button>
                       </div>
+                      <div
+                        data-calendar-resize-handle="true"
+                        className="calendar-event-card__resize-handle"
+                        title="終了時刻をドラッグで変更"
+                        onMouseDown={(e) => handleEventResizeStart(e, event)}
+                      />
                     </div>
                   );
                 })}
@@ -1180,6 +1307,36 @@ export default function CalendarPage() {
           </div>
         </section>
       </div>
+
+      {selectedEventDetail && (
+        <div className="secretary-modal-backdrop" onMouseDown={() => setSelectedEventDetail(null)}>
+          <div className="secretary-event-modal calendar-event-detail-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="secretary-event-modal__header">
+              <div>
+                <span>CALENDAR EVENT</span>
+                <h2>{selectedEventDetail.title}</h2>
+              </div>
+              <button type="button" onClick={() => setSelectedEventDetail(null)}>×</button>
+            </div>
+            <div className="calendar-event-detail-modal__body">
+              <p><strong>時間</strong><span>{getTimeLabel(selectedEventDetail.start_time, selectedEventDetail.end_time)}</span></p>
+              <p><strong>予定時間</strong><span>{formatMinutes(getDurationMinutes(selectedEventDetail.start_time, selectedEventDetail.end_time))}</span></p>
+              <p><strong>ステータス</strong><span>{getEventStatusStyle(selectedEventDetail.status).label}</span></p>
+              {selectedEventDetail.description && <p><strong>メモ</strong><span>{selectedEventDetail.description}</span></p>}
+            </div>
+            <div className="calendar-event-detail-modal__status-actions">
+              <button type="button" onClick={() => handleUpdateEventStatus(selectedEventDetail, "planned")}>予定</button>
+              <button type="button" onClick={() => handleUpdateEventStatus(selectedEventDetail, "in_progress")}>進行中</button>
+              <button type="button" onClick={() => handleUpdateEventStatus(selectedEventDetail, "done")}>完了</button>
+              <button type="button" onClick={() => handleUpdateEventStatus(selectedEventDetail, "cancelled")}>取消</button>
+            </div>
+            <div className="secretary-event-modal__actions">
+              <button type="button" onClick={() => handleDelete(selectedEventDetail.id)}>削除</button>
+              <button type="button" onClick={() => handleEdit(selectedEventDetail)}>編集する</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

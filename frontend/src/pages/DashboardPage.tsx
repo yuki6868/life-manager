@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   createCalendarEvent,
+  deleteCalendarEvent,
   fetchCalendarEvents,
   fetchYesterdayTasks,
+  updateCalendarEvent,
 } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 import {
@@ -312,6 +314,7 @@ export default function DashboardPage() {
   const [assistantActionId, setAssistantActionId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()));
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [selectedDashboardEvent, setSelectedDashboardEvent] = useState<CalendarEvent | null>(null);
   const [eventForm, setEventForm] = useState<EventFormState>(() => {
     const start = roundUpToNextFiveMinutes(new Date());
     const end = addMinutes(start, 30);
@@ -445,6 +448,7 @@ export default function DashboardPage() {
   }
 
   function openEventModal(defaults?: Partial<EventFormState>) {
+    setSelectedDashboardEvent(null);
     const baseDate = selectedDate === toDateKey(new Date())
       ? roundUpToNextFiveMinutes(new Date())
       : new Date(`${selectedDate}T09:00`);
@@ -462,9 +466,26 @@ export default function DashboardPage() {
     setIsEventModalOpen(true);
   }
 
+  function openExistingEventModal(event: CalendarEvent) {
+    const start = new Date(event.start_time);
+    const end = new Date(event.end_time);
+
+    setSelectedDashboardEvent(event);
+    setEventForm({
+      title: event.title,
+      eventType: event.description?.replace(/^種類:\s*/, "") || "作業",
+      date: event.start_time.slice(0, 10),
+      startTime: toTimeInputValue(start),
+      endTime: toTimeInputValue(end),
+    });
+    setAssistantMessage("");
+    setIsEventModalOpen(true);
+  }
+
   function closeEventModal() {
     if (assistantActionId === "manual-event") return;
     setIsEventModalOpen(false);
+    setSelectedDashboardEvent(null);
   }
 
   function handleEventStartTimeChange(startTime: string) {
@@ -500,21 +521,53 @@ export default function DashboardPage() {
         return;
       }
 
-      await createCalendarEvent({
-        task_id: null,
-        title,
-        description: buildEventDescription(eventForm.eventType),
-        start_time: start,
-        end_time: end,
-      });
+      if (selectedDashboardEvent) {
+        await updateCalendarEvent(selectedDashboardEvent.id, {
+          task_id: selectedDashboardEvent.task_id ?? null,
+          title,
+          description: buildEventDescription(eventForm.eventType),
+          start_time: start,
+          end_time: end,
+          status: selectedDashboardEvent.status,
+        });
+      } else {
+        await createCalendarEvent({
+          task_id: null,
+          title,
+          description: buildEventDescription(eventForm.eventType),
+          start_time: start,
+          end_time: end,
+        });
+      }
 
       setSelectedDate(eventForm.date);
       setIsEventModalOpen(false);
-      setAssistantMessage(`${title} を予定に追加しました。`);
+      setSelectedDashboardEvent(null);
+      setAssistantMessage(selectedDashboardEvent ? `${title} を更新しました。` : `${title} を予定に追加しました。`);
       await loadData();
     } catch (error) {
       console.error(error);
       setAssistantMessage("予定の追加に失敗しました。");
+    } finally {
+      setAssistantActionId(null);
+    }
+  }
+
+  async function handleDeleteDashboardEvent() {
+    if (!selectedDashboardEvent) return;
+
+    setAssistantActionId("manual-event");
+    setAssistantMessage("");
+
+    try {
+      await deleteCalendarEvent(selectedDashboardEvent.id);
+      setIsEventModalOpen(false);
+      setSelectedDashboardEvent(null);
+      setAssistantMessage("予定を削除しました。");
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      setAssistantMessage("予定の削除に失敗しました。");
     } finally {
       setAssistantActionId(null);
     }
@@ -784,7 +837,8 @@ export default function DashboardPage() {
 
             <div className="secretary-event-modal__actions">
               <button type="button" onClick={closeEventModal}>キャンセル</button>
-              <button type="submit" disabled={assistantActionId === "manual-event"}>追加する</button>
+              {selectedDashboardEvent && <button type="button" onClick={handleDeleteDashboardEvent} disabled={assistantActionId === "manual-event"}>削除する</button>}
+              <button type="submit" disabled={assistantActionId === "manual-event"}>{selectedDashboardEvent ? "更新する" : "追加する"}</button>
             </div>
           </form>
         </div>
@@ -793,7 +847,7 @@ export default function DashboardPage() {
       {!isLoading && !errorMessage && (
         <>
           <div className="secretary-board">
-            <DashboardTimeline events={todayEvents} onAddEvent={() => openEventModal()} onAddUrgentTask={() => navigate("/timer#urgent-interrupt")} />
+            <DashboardTimeline events={todayEvents} onAddEvent={() => openEventModal()} onAddUrgentTask={() => navigate("/timer#urgent-interrupt")} onSelectEvent={openExistingEventModal} />
 
             <div className="secretary-center-column">
               <section className="secretary-card secretary-summary-card">
@@ -914,7 +968,7 @@ export default function DashboardPage() {
   );
 }
 
-function DashboardTimeline({ events, onAddEvent, onAddUrgentTask }: { events: CalendarEvent[]; onAddEvent: () => void; onAddUrgentTask: () => void }) {
+function DashboardTimeline({ events, onAddEvent, onAddUrgentTask, onSelectEvent }: { events: CalendarEvent[]; onAddEvent: () => void; onAddUrgentTask: () => void; onSelectEvent: (event: CalendarEvent) => void }) {
   const startHour = 7;
   const endHour = 23;
   const hourHeight = 64;
@@ -946,7 +1000,7 @@ function DashboardTimeline({ events, onAddEvent, onAddUrgentTask }: { events: Ca
           const tone = ["blue", "green", "orange", "purple", "yellow", "gray", "rose"][index % 7];
 
           return (
-            <article key={event.id} className={`secretary-timeline-event secretary-timeline-event--${tone}`} style={{ top: `${top}px`, height: `${height}px` }}>
+            <article key={event.id} className={`secretary-timeline-event secretary-timeline-event--${tone}`} style={{ top: `${top}px`, height: `${height}px` }} onClick={() => onSelectEvent(event)} role="button" tabIndex={0} onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") onSelectEvent(event); }}>
               <strong>{event.title}</strong>
               <span>{formatTime(event.start_time)} - {formatTime(event.end_time)}</span>
               {event.description && <small>{event.description}</small>}

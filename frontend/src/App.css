@@ -7079,3 +7079,69 @@
   background: #ef4444;
   content: "";
 }
+
+/* Event edit/delete and resize interactions */
+.calendar-event-card__resize-handle {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 4px;
+  height: 10px;
+  border-radius: 999px;
+  cursor: ns-resize;
+}
+
+.calendar-event-card__resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 42px;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.calendar-event-detail-modal__body {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-event-detail-modal__body p {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+}
+
+.calendar-event-detail-modal__body strong {
+  color: #0f172a;
+}
+
+.calendar-event-detail-modal__status-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.calendar-event-detail-modal__status-actions button {
+  min-height: 36px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #2563eb;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.secretary-timeline-event {
+  cursor: pointer;
+}
+
+.secretary-timeline-event:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.12);
+}
