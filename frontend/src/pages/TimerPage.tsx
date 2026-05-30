@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { NavLink } from "react-router-dom";
 import { createWorkLog } from "../api/workLogs";
 import { fetchCalendarEvents } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 import { createUrgentTask, fetchTasks, updateTaskStatus } from "../api/tasks";
 import type { Task } from "../api/tasks";
+import { readTimerSettings } from "../utils/appSettings";
 
 type TimerStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -122,6 +124,7 @@ export default function TimerPage() {
   const [urgentMessage, setUrgentMessage] = useState("");
   const [urgentErrorMessage, setUrgentErrorMessage] = useState("");
   const [hasRestoredTimerState, setHasRestoredTimerState] = useState(false);
+  const [timerSettings, setTimerSettings] = useState(() => readTimerSettings());
   const didRestoreTimerStateRef = useRef(false);
 
   useEffect(() => {
@@ -183,6 +186,10 @@ export default function TimerPage() {
       setTasks(taskData);
       setCalendarEvents(eventData);
     });
+  }, []);
+
+  useEffect(() => {
+    setTimerSettings(readTimerSettings());
   }, []);
 
   useEffect(() => {
@@ -496,7 +503,8 @@ export default function TimerPage() {
     setUrgentErrorMessage("");
   }
 
-  const focusCycleSeconds = 25 * 60;
+  const focusCycleSeconds = timerSettings.workMinutes * 60;
+  const breakCycleSeconds = timerSettings.breakMinutes * 60;
   const timerProgressPercent = Math.min(100, (elapsedSeconds / focusCycleSeconds) * 100);
   const secondsUntilBreak = Math.max(0, focusCycleSeconds - elapsedSeconds);
   const displayTaskTitle = selectedTask?.title ?? selectedCalendarEvent?.title ?? "作業タスクを選択してください";
@@ -533,7 +541,7 @@ export default function TimerPage() {
         </div>
         <div className="timer-header-actions">
           <button type="button" className="timer-ghost-button">◎ 集中モード</button>
-          <button type="button" className="timer-ghost-button">⚙ タイマー設定</button>
+          <NavLink className="timer-ghost-button" to="/settings">⚙ タイマー設定</NavLink>
           <a className="timer-danger-button" href="#urgent-interrupt">⚡ 緊急タスク割り込み</a>
         </div>
       </div>
@@ -542,7 +550,7 @@ export default function TimerPage() {
         <div className="timer-tip-card__icon" aria-hidden="true">✦</div>
         <div>
           <strong>集中のコツ</strong>
-          <p>25分集中 + 5分休憩のサイクルで、生産性を高めましょう。</p>
+          <p>{timerSettings.workMinutes}分集中 + {timerSettings.breakMinutes}分休憩のサイクルで、生産性を高めましょう。</p>
         </div>
       </div>
 
@@ -605,10 +613,10 @@ export default function TimerPage() {
                 <div className="timer-progress-ring__inner">
                   <span className="timer-dot">● {status === "running" ? "集中中" : status === "paused" ? "休止中" : "待機中"}</span>
                   <strong>{formatElapsed(elapsedSeconds)}</strong>
-                  <p>{status === "running" ? "25分集中" : status === "paused" ? "一時停止中" : "開始を押して計測"}</p>
+                  <p>{status === "running" ? `${timerSettings.workMinutes}分集中` : status === "paused" ? "一時停止中" : "開始を押して計測"}</p>
                 </div>
               </div>
-              <span className="timer-break-pill">休憩まで {formatElapsed(secondsUntilBreak)}</span>
+              <span className="timer-break-pill">休憩まで {formatElapsed(secondsUntilBreak)} / 休憩 {formatElapsed(breakCycleSeconds)}</span>
             </div>
 
             <div className="timer-main-actions">
@@ -716,7 +724,7 @@ export default function TimerPage() {
         </div>
       </div>
 
-      <p className="timer-footer-hint">💡 ヒント：タイマー設定から、集中時間や休憩時間をカスタマイズできます。</p>
+      <p className="timer-footer-hint">💡 ヒント：設定画面から、集中時間や休憩時間をカスタマイズできます。</p>
     </section>
   );
 

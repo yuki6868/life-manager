@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import { NavLink } from "react-router-dom";
 import {
   createGapTask,
   deleteGapTask,
@@ -10,6 +11,7 @@ import {
 } from "../api/gapTasks";
 import type { GapTask, GapTaskSuggestion } from "../api/gapTasks";
 import { createWorkLog } from "../api/workLogs";
+import { readGapTaskSettings } from "../utils/appSettings";
 
 const PRIORITY_OPTIONS = [
   { value: "high", label: "高" },
@@ -42,20 +44,6 @@ type TimerStatus = "idle" | "running" | "paused" | "stopped";
 type TaskTab = "suggested" | "favorite" | "completed";
 type SortKey = "recommended" | "short" | "priority";
 
-type GapTaskSettings = {
-  dailyTargetMinutes: number;
-  excludeFocusMode: boolean;
-  preferredEnergyLevel: string;
-};
-
-const DEFAULT_GAP_TASK_SETTINGS: GapTaskSettings = {
-  dailyTargetMinutes: 60,
-  excludeFocusMode: false,
-  preferredEnergyLevel: "",
-};
-
-const GAP_TASK_SETTINGS_STORAGE_KEY = "life-manager-gap-task-settings";
-
 export default function GapTasksPage() {
   const [gapTasks, setGapTasks] = useState<GapTask[]>([]);
   const [suggestion, setSuggestion] = useState<GapTaskSuggestion | null>(null);
@@ -84,9 +72,7 @@ export default function GapTasksPage() {
   const [sortKey, setSortKey] = useState<SortKey>("recommended");
   const [showForm, setShowForm] = useState(false);
   const [showTip, setShowTip] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState<GapTaskSettings>(() => readGapTaskSettings());
-  const [settingsDraft, setSettingsDraft] = useState<GapTaskSettings>(() => readGapTaskSettings());
+  const [settings, setSettings] = useState(() => readGapTaskSettings());
   const [favoriteTaskIds, setFavoriteTaskIds] = useState<number[]>(() => readFavoriteGapTaskIds());
 
   async function loadGapTasks() {
@@ -125,29 +111,13 @@ export default function GapTasksPage() {
   }, [favoriteTaskIds]);
 
   useEffect(() => {
-    window.localStorage.setItem(GAP_TASK_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-    if (settings.preferredEnergyLevel) {
-      setSuggestionEnergyLevel(settings.preferredEnergyLevel);
+    const latestSettings = readGapTaskSettings();
+    setSettings(latestSettings);
+    if (latestSettings.preferredEnergyLevel) {
+      setSuggestionEnergyLevel(latestSettings.preferredEnergyLevel);
+      setCategoryFilter(latestSettings.preferredEnergyLevel);
     }
-  }, [settings]);
-
-  function openSettings() {
-    setSettingsDraft(settings);
-    setShowSettings(true);
-  }
-
-  function handleSaveSettings(e: FormEvent) {
-    e.preventDefault();
-    const normalizedSettings = {
-      ...settingsDraft,
-      dailyTargetMinutes: Math.max(1, Number(settingsDraft.dailyTargetMinutes || DEFAULT_GAP_TASK_SETTINGS.dailyTargetMinutes)),
-    };
-    setSettings(normalizedSettings);
-    if (normalizedSettings.preferredEnergyLevel) {
-      setCategoryFilter(normalizedSettings.preferredEnergyLevel);
-    }
-    setShowSettings(false);
-  }
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -386,9 +356,9 @@ export default function GapTasksPage() {
           <p>まとまった時間が取れないときに取り組めるタスクを提案します。</p>
         </div>
         <div className="gap-tasks-hero-actions">
-          <button type="button" className="gap-ghost-button" onClick={openSettings}>
+          <NavLink className="gap-ghost-button" to="/settings">
             ⚙ 設定
-          </button>
+          </NavLink>
           <button type="button" className="gap-primary-button" onClick={refreshGapTaskData}>
             ↻ 提案を更新
           </button>
@@ -432,51 +402,6 @@ export default function GapTasksPage() {
 
       {timerMessage && <div className="gap-alert gap-alert--success">{timerMessage}</div>}
       {timerErrorMessage && <div className="gap-alert gap-alert--error">{timerErrorMessage}</div>}
-
-      {showSettings && (
-        <section className="gap-settings-modal" role="dialog" aria-modal="true" aria-label="すきまタスク設定">
-          <form className="gap-settings-modal-card" onSubmit={handleSaveSettings}>
-            <div className="gap-settings-modal-header">
-              <div>
-                <p className="gap-card-kicker">設定</p>
-                <h2>すきまタスクの設定</h2>
-              </div>
-              <button type="button" onClick={() => setShowSettings(false)} aria-label="設定を閉じる">×</button>
-            </div>
-            <label>
-              1日のすきま時間目標（分）
-              <input
-                type="number"
-                min="1"
-                value={settingsDraft.dailyTargetMinutes}
-                onChange={(e) => setSettingsDraft((value) => ({ ...value, dailyTargetMinutes: Number(e.target.value) }))}
-              />
-            </label>
-            <label>
-              優先して提案する集中度
-              <select
-                value={settingsDraft.preferredEnergyLevel}
-                onChange={(e) => setSettingsDraft((value) => ({ ...value, preferredEnergyLevel: e.target.value }))}
-              >
-                <option value="">指定しない</option>
-                {ENERGY_LEVEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <label className="gap-settings-check-label">
-              <input
-                type="checkbox"
-                checked={settingsDraft.excludeFocusMode}
-                onChange={(e) => setSettingsDraft((value) => ({ ...value, excludeFocusMode: e.target.checked }))}
-              />
-              集中モード中はスキマタスク提案を控える
-            </label>
-            <div className="gap-form-actions">
-              <button type="submit" className="gap-primary-button">保存する</button>
-              <button type="button" className="gap-ghost-button" onClick={() => setShowSettings(false)}>キャンセル</button>
-            </div>
-          </form>
-        </section>
-      )}
 
       <div className="gap-toolbar">
         <div className="gap-tabs" role="tablist" aria-label="タスク表示切り替え">
@@ -631,7 +556,7 @@ export default function GapTasksPage() {
             <SettingsRow icon="🔒" title="集中モードの除外設定" text={settings.excludeFocusMode ? "集中モード中は提案を控えます" : "集中モード中も提案します"} />
             <SettingsRow icon="🚩" title="集中度の優先設定" text={settings.preferredEnergyLevel ? getOptionLabel(ENERGY_LEVEL_OPTIONS, settings.preferredEnergyLevel) : "指定なし"} />
             <SettingsRow icon="⏱" title="1日の目標設定" text={`${settings.dailyTargetMinutes}分`} />
-            <button type="button" onClick={openSettings}>設定を開く ›</button>
+            <NavLink to="/settings">設定を開く ›</NavLink>
           </section>
         </aside>
       </div>
@@ -764,19 +689,6 @@ function readFavoriteGapTaskIds() {
   }
 }
 
-function readGapTaskSettings(): GapTaskSettings {
-  try {
-    const raw = window.localStorage.getItem(GAP_TASK_SETTINGS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return {
-      dailyTargetMinutes: Math.max(1, Number(parsed.dailyTargetMinutes ?? DEFAULT_GAP_TASK_SETTINGS.dailyTargetMinutes)),
-      excludeFocusMode: Boolean(parsed.excludeFocusMode ?? DEFAULT_GAP_TASK_SETTINGS.excludeFocusMode),
-      preferredEnergyLevel: typeof parsed.preferredEnergyLevel === "string" ? parsed.preferredEnergyLevel : DEFAULT_GAP_TASK_SETTINGS.preferredEnergyLevel,
-    };
-  } catch {
-    return DEFAULT_GAP_TASK_SETTINGS;
-  }
-}
 
 function getTaskIcon(task: GapTask) {
   if (task.energy_level === "low") return "☕";

@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import CalendarPage from "./pages/CalendarPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -10,6 +11,7 @@ import TimerPage from "./pages/TimerPage";
 import SettingsPage from "./pages/SettingsPage";
 import WeekCalendarPage from "./pages/WeekCalendarPage";
 import WorkLogsPage from "./pages/WorkLogsPage";
+import { APP_SETTINGS_UPDATED_EVENT, type EnergyLevel, readEnergyLevel, readFocusMode } from "./utils/appSettings";
 import "./App.css";
 
 type MenuItem = {
@@ -17,6 +19,19 @@ type MenuItem = {
   label: string;
   icon: string;
   badge?: string;
+};
+
+
+const energyLevelLabels: Record<EnergyLevel, string> = {
+  low: "低め 😌",
+  normal: "元気 🙂",
+  high: "高集中 🔥",
+};
+
+const energyLevelBarCounts: Record<EnergyLevel, number> = {
+  low: 1,
+  normal: 3,
+  high: 4,
 };
 
 const menuItems: MenuItem[] = [
@@ -35,6 +50,26 @@ const menuItems: MenuItem[] = [
 function AppShell() {
   const location = useLocation();
   const isDashboard = location.pathname === "/" || location.pathname.startsWith("/dashboard");
+  const [focusMode, setFocusMode] = useState(readFocusMode);
+  const [energyLevel, setEnergyLevel] = useState<EnergyLevel>(readEnergyLevel);
+
+  useEffect(() => {
+    function syncSettings() {
+      setFocusMode(readFocusMode());
+      setEnergyLevel(readEnergyLevel());
+    }
+
+    syncSettings();
+    window.addEventListener(APP_SETTINGS_UPDATED_EVENT, syncSettings);
+    window.addEventListener("storage", syncSettings);
+
+    return () => {
+      window.removeEventListener(APP_SETTINGS_UPDATED_EVENT, syncSettings);
+      window.removeEventListener("storage", syncSettings);
+    };
+  }, []);
+
+  const activeEnergyBars = useMemo(() => energyLevelBarCounts[energyLevel], [energyLevel]);
 
   return (
     <div className="app-shell">
@@ -63,11 +98,15 @@ function AppShell() {
           ))}
         </nav>
 
-        <div className="app-sidebar-card">
+        <div className={focusMode ? "app-sidebar-card" : "app-sidebar-card app-sidebar-card--muted"}>
           <p>集中モード</p>
-          <strong>元気 🙂</strong>
-          <span>エネルギーレベル</span>
-          <div className="app-energy-bars" aria-hidden="true"><i /><i /><i /><i /></div>
+          <strong>{focusMode ? "ON" : "OFF"} / {energyLevelLabels[energyLevel]}</strong>
+          <span>{focusMode ? "設定画面と同期中" : "集中モードは無効です"}</span>
+          <div className="app-energy-bars" aria-hidden="true">
+            {[0, 1, 2, 3].map((index) => (
+              <i key={index} className={index < activeEnergyBars && focusMode ? "app-energy-bars__bar app-energy-bars__bar--active" : "app-energy-bars__bar"} />
+            ))}
+          </div>
           <NavLink to="/settings">変更する</NavLink>
         </div>
       </aside>
