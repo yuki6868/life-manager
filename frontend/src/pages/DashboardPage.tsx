@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   createCalendarEvent,
   fetchCalendarEvents,
+  fetchYesterdayTasks,
 } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 import {
@@ -21,10 +23,52 @@ import type { Task } from "../api/tasks";
 
 const DISMISSED_ASSISTANT_SUGGESTIONS_KEY = "dismissedAssistantSuggestionIds";
 
+type EventFormState = {
+  title: string;
+  eventType: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+};
+
+const EVENT_TYPE_OPTIONS = [
+  "作業",
+  "勉強",
+  "休憩",
+  "打ち合わせ",
+  "移動",
+  "家事",
+  "その他",
+];
+
+function toTimeInputValue(date: Date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60000);
+}
+
+function combineDateAndTime(date: string, time: string) {
+  return `${date}T${time}`;
+}
+
+function buildEventDescription(eventType: string) {
+  return `種類: ${eventType}`;
+}
+
 function toDateTimeLocalValue(date: Date) {
   const offset = date.getTimezoneOffset();
   const local = new Date(date.getTime() - offset * 60 * 1000);
   return local.toISOString().slice(0, 16);
+}
+
+function applyDateToTime(dateText: string, timeSource: string) {
+  const source = new Date(timeSource);
+  const hours = String(source.getHours()).padStart(2, "0");
+  const minutes = String(source.getMinutes()).padStart(2, "0");
+
+  return `${dateText}T${hours}:${minutes}`;
 }
 
 function roundUpToNextFiveMinutes(date: Date) {
@@ -266,8 +310,23 @@ export default function DashboardPage() {
   >(() => readDismissedSuggestionIds());
   const [assistantMessage, setAssistantMessage] = useState("");
   const [assistantActionId, setAssistantActionId] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()));
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [eventForm, setEventForm] = useState<EventFormState>(() => {
+    const start = roundUpToNextFiveMinutes(new Date());
+    const end = addMinutes(start, 30);
+
+    return {
+      title: "",
+      eventType: "作業",
+      date: toDateKey(start),
+      startTime: toTimeInputValue(start),
+      endTime: toTimeInputValue(end),
+    };
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const navigate = useNavigate();
 
   async function loadData() {
     setIsLoading(true);
@@ -357,21 +416,170 @@ export default function DashboardPage() {
     }
   }
 
+
+  async function handleAddTaskToCalendar(task: Task) {
+    setAssistantActionId(`task-${task.id}`);
+    setAssistantMessage("");
+
+    try {
+      const minutes = Math.max(10, task.estimated_minutes || 30);
+      const start = roundUpToNextFiveMinutes(new Date());
+      const end = new Date(start.getTime() + minutes * 60000);
+
+      await createCalendarEvent({
+        task_id: task.id,
+        title: task.title,
+        description: task.description ?? "ダッシュボードから追加",
+        start_time: toDateTimeLocalValue(start),
+        end_time: toDateTimeLocalValue(end),
+      });
+
+      setAssistantMessage(`${task.title} を今日の予定に追加しました。`);
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      setAssistantMessage("予定の追加に失敗しました。");
+    } finally {
+      setAssistantActionId(null);
+    }
+  }
+
+  function openEventModal(defaults?: Partial<EventFormState>) {
+    const baseDate = selectedDate === toDateKey(new Date())
+      ? roundUpToNextFiveMinutes(new Date())
+      : new Date(`${selectedDate}T09:00`);
+    const start = roundUpToNextFiveMinutes(baseDate);
+    const end = addMinutes(start, 30);
+
+    setEventForm({
+      title: defaults?.title ?? "",
+      eventType: defaults?.eventType ?? "作業",
+      date: defaults?.date ?? selectedDate,
+      startTime: defaults?.startTime ?? toTimeInputValue(start),
+      endTime: defaults?.endTime ?? toTimeInputValue(end),
+    });
+    setAssistantMessage("");
+    setIsEventModalOpen(true);
+  }
+
+  function closeEventModal() {
+    if (assistantActionId === "manual-event") return;
+    setIsEventModalOpen(false);
+  }
+
+  function handleEventStartTimeChange(startTime: string) {
+    setEventForm((current) => {
+      const start = new Date(combineDateAndTime(current.date, startTime));
+      const end = addMinutes(start, 30);
+
+      return {
+        ...current,
+        startTime,
+        endTime: toTimeInputValue(end),
+      };
+    });
+  }
+
+  async function handleCreateEventFromModal(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAssistantActionId("manual-event");
+    setAssistantMessage("");
+
+    try {
+      const title = eventForm.title.trim();
+      if (!title) {
+        setAssistantMessage("予定名を入力してください。");
+        return;
+      }
+
+      const start = combineDateAndTime(eventForm.date, eventForm.startTime);
+      const end = combineDateAndTime(eventForm.date, eventForm.endTime);
+
+      if (new Date(end).getTime() <= new Date(start).getTime()) {
+        setAssistantMessage("終了時刻は開始時刻より後にしてください。");
+        return;
+      }
+
+      await createCalendarEvent({
+        task_id: null,
+        title,
+        description: buildEventDescription(eventForm.eventType),
+        start_time: start,
+        end_time: end,
+      });
+
+      setSelectedDate(eventForm.date);
+      setIsEventModalOpen(false);
+      setAssistantMessage(`${title} を予定に追加しました。`);
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      setAssistantMessage("予定の追加に失敗しました。");
+    } finally {
+      setAssistantActionId(null);
+    }
+  }
+
+  async function handleCopyYesterdayEventsToSelectedDate() {
+    setAssistantActionId("copy-yesterday");
+    setAssistantMessage("");
+
+    try {
+      const yesterdayTasks = await fetchYesterdayTasks();
+      if (yesterdayTasks.length === 0) {
+        setAssistantMessage("コピーできる昨日の予定がありません。");
+        return;
+      }
+
+      await Promise.all(yesterdayTasks.map((task) => {
+        const start = applyDateToTime(selectedDate, task.start_time);
+        const end = applyDateToTime(selectedDate, task.end_time);
+
+        return createCalendarEvent({
+          task_id: task.task_id ?? null,
+          title: task.title,
+          description: task.description ?? "昨日の予定からコピー",
+          start_time: start,
+          end_time: end,
+        });
+      }));
+
+      setAssistantMessage(`昨日の予定を${yesterdayTasks.length}件コピーしました。`);
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      setAssistantMessage("昨日の予定コピーに失敗しました。");
+    } finally {
+      setAssistantActionId(null);
+    }
+  }
+
+  function handleGenerateRecurringEventsFromDashboard() {
+    navigate("/calendar#recurrence");
+  }
+
+  function moveDashboardDate(days: number) {
+    const date = new Date(`${selectedDate}T00:00`);
+    date.setDate(date.getDate() + days);
+    setSelectedDate(toDateKey(date));
+  }
+
   useEffect(() => {
     loadData();
   }, []);
 
   const todayKey = toDateKey(new Date());
+  const isTodaySelected = selectedDate === todayKey;
 
   const todayEvents = useMemo(() => {
     return calendarEvents
       .filter((event) => event.status !== "cancelled")
-      .filter((event) => event.start_time.slice(0, 10) === todayKey)
+      .filter((event) => event.start_time.slice(0, 10) === selectedDate)
       .sort(
         (a, b) =>
           new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
       );
-  }, [calendarEvents, todayKey]);
+  }, [calendarEvents, selectedDate]);
 
   const incompleteEvents = useMemo(() => {
     return todayEvents.filter(isIncompleteEvent);
@@ -458,388 +666,285 @@ export default function DashboardPage() {
 
   const achievementRate = clampPercent(summary?.achievement_rate ?? 0);
   const urgentCollapseRate = clampPercent(urgentTaskAnalysis?.plan_collapse_rate ?? 0);
+  const topSuggestions = visibleAssistantSuggestions.slice(0, 2);
+  const gapTaskCandidates = tasks
+    .filter((task) => !["completed", "cancelled", "archived"].includes(task.status))
+    .sort((a, b) => a.estimated_minutes - b.estimated_minutes)
+    .slice(0, 3);
+
+  const selectedPlannedMinutes = todayEvents.reduce(
+    (total, event) => total + getEventMinutes(event),
+    0,
+  );
+  const displayPlannedMinutes = isTodaySelected
+    ? summary?.planned_minutes ?? selectedPlannedMinutes
+    : selectedPlannedMinutes;
+  const displayActualMinutes = isTodaySelected ? summary?.actual_minutes ?? 0 : 0;
+  const displayAchievementRate = isTodaySelected
+    ? achievementRate
+    : clampPercent(displayPlannedMinutes > 0 ? (displayActualMinutes / displayPlannedMinutes) * 100 : 0);
+  const nextEvent = todayEvents.find((event) => new Date(event.start_time).getTime() > Date.now());
+  const gapMinutes = isTodaySelected && nextEvent
+    ? Math.max(0, Math.floor((new Date(nextEvent.start_time).getTime() - Date.now()) / 60000))
+    : null;
+  const distributionProjects = progressProjects
+    .map((project) => ({ project, minutes: Math.max(0, project.actual_minutes) }))
+    .filter((item) => item.minutes > 0)
+    .slice(0, 4);
+  const distributionTotalMinutes = distributionProjects.reduce((total, item) => total + item.minutes, 0);
 
   return (
-    <section className="dashboard-page">
-      <div className="dashboard-hero">
-        <div>
-          <p className="dashboard-hero__eyebrow">Today Overview</p>
-          <h1 className="dashboard-hero__title">ダッシュボード</h1>
-          <p className="dashboard-hero__description">
-            今日の予定、実績、進行中タスク、未完了予定をまとめて確認します。
-          </p>
+    <section className="dashboard-page dashboard-page--secretary">
+      <div className="secretary-topbar">
+        <div className="secretary-date-nav" aria-label="日付ナビゲーション">
+          <button type="button" onClick={() => moveDashboardDate(-1)}>‹</button>
+          <button type="button" onClick={() => moveDashboardDate(1)}>›</button>
+          <strong>{new Date(`${selectedDate}T00:00`).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric", weekday: "short" })}</strong>
         </div>
-        <button
-          type="button"
-          className="dashboard-refresh-button"
-          onClick={loadData}
-          disabled={isLoading}
-        >
-          {isLoading ? "更新中..." : "再読み込み"}
-        </button>
+        <div className="secretary-view-actions">
+          <button type="button" onClick={() => { setSelectedDate(todayKey); void loadData(); }}>今日</button>
+          <button type="button" onClick={() => navigate("/calendar/week")}>週</button>
+          <button type="button" className="is-active" onClick={() => navigate(`/calendar?date=${selectedDate}`)}>日</button>
+          <button type="button" className="secretary-add-button" onClick={() => openEventModal()}>＋ 予定を追加</button>
+        </div>
       </div>
 
       {isLoading && <p className="dashboard-state-message">読み込み中...</p>}
       {errorMessage && <p className="dashboard-error-message">{errorMessage}</p>}
 
+      {isEventModalOpen && (
+        <div className="secretary-modal-backdrop" role="presentation" onMouseDown={closeEventModal}>
+          <form
+            className="secretary-event-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={handleCreateEventFromModal}
+          >
+            <div className="secretary-event-modal__header">
+              <div>
+                <span>予定を追加</span>
+                <h2>その場で予定を作成</h2>
+              </div>
+              <button type="button" aria-label="閉じる" onClick={closeEventModal}>×</button>
+            </div>
+
+            <label>
+              <span>日付</span>
+              <input
+                type="date"
+                value={eventForm.date}
+                onChange={(event) => setEventForm((current) => ({ ...current, date: event.target.value }))}
+                required
+              />
+            </label>
+
+            <div className="secretary-event-modal__time-grid">
+              <label>
+                <span>開始</span>
+                <input
+                  type="time"
+                  value={eventForm.startTime}
+                  onChange={(event) => handleEventStartTimeChange(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                <span>終了</span>
+                <input
+                  type="time"
+                  value={eventForm.endTime}
+                  onChange={(event) => setEventForm((current) => ({ ...current, endTime: event.target.value }))}
+                  required
+                />
+              </label>
+            </div>
+
+            <label>
+              <span>種類</span>
+              <select
+                value={eventForm.eventType}
+                onChange={(event) => setEventForm((current) => ({ ...current, eventType: event.target.value }))}
+              >
+                {EVENT_TYPE_OPTIONS.map((eventType) => (
+                  <option key={eventType} value={eventType}>{eventType}</option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>予定名</span>
+              <input
+                type="text"
+                value={eventForm.title}
+                onChange={(event) => setEventForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="例：会計士 勉強"
+                autoFocus
+                required
+              />
+            </label>
+
+            <div className="secretary-event-modal__actions">
+              <button type="button" onClick={closeEventModal}>キャンセル</button>
+              <button type="submit" disabled={assistantActionId === "manual-event"}>追加する</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {!isLoading && !errorMessage && (
         <>
-          <div className="dashboard-top-grid">
-            <div className="dashboard-achievement-card">
-              <div>
-                <p className="dashboard-card-label">今日の達成率</p>
-                <strong className="dashboard-achievement-card__value">
-                  {achievementRate}%
-                </strong>
-                <p className="dashboard-achievement-card__message">
-                  {achievementMessage(achievementRate)}
-                </p>
-              </div>
-              <ProgressBar
-                value={achievementRate}
-                label={`今日の達成率 ${achievementRate}%`}
-                size="large"
-              />
-              <div className="dashboard-achievement-card__meta">
-                <span>予定 {formatMinutes(summary?.planned_minutes ?? 0)}</span>
-                <span>実績 {formatMinutes(summary?.actual_minutes ?? 0)}</span>
-              </div>
-            </div>
+          <div className="secretary-board">
+            <DashboardTimeline events={todayEvents} onAddEvent={() => openEventModal()} />
 
-            <div className="dashboard-summary-grid">
-              <SummaryCard
-                label="今日の予定時間"
-                value={formatMinutes(summary?.planned_minutes ?? 0)}
-                icon="📅"
-                tone="blue"
-              />
-              <SummaryCard
-                label="今日の実績時間"
-                value={formatMinutes(summary?.actual_minutes ?? 0)}
-                icon="⏱️"
-                tone="green"
-              />
-              <SummaryCard
-                label="未完了予定"
-                value={`${summary?.incomplete_events_count ?? incompleteEvents.length}件`}
-                icon="⚠️"
-                tone="amber"
-              />
-              <SummaryCard
-                label="過小見積率"
-                value={`${estimationAccuracy?.underestimation_rate ?? 0}%`}
-                icon="📏"
-                tone="purple"
-              />
-              <SummaryCard
-                label="緊急タスク件数"
-                value={`${urgentTaskAnalysis?.urgent_task_count ?? 0}件`}
-                icon="🚨"
-                tone="rose"
-              />
-              <SummaryCard
-                label="緊急対応時間"
-                value={formatMinutes(urgentTaskAnalysis?.urgent_actual_minutes ?? 0)}
-                icon="🔥"
-                tone="orange"
-              />
-            </div>
-          </div>
-
-          <DashboardPanel title="秘書提案" description="今の状況から、次に取りやすい行動を提案します。">
-            {assistantMessage && (
-              <p className="dashboard-info-message">{assistantMessage}</p>
-            )}
-
-            {visibleAssistantSuggestions.length === 0 ? (
-              <p className="dashboard-empty-message">今すぐ表示する提案はありません。</p>
-            ) : (
-              <div className="dashboard-list dashboard-list--suggestions">
-                {visibleAssistantSuggestions.map((suggestion) => (
-                  <div key={suggestion.id} className="dashboard-item dashboard-item--suggestion">
-                    <div className="dashboard-item__header">
-                      <strong>{suggestion.title}</strong>
-                      <span
-                        style={priorityBadgeStyle(suggestion.priority)}
-                        className="dashboard-priority-badge"
-                      >
-                        {priorityLabel(suggestion.priority)}
-                      </span>
-                    </div>
-                    <p className="dashboard-muted-text">{suggestion.message}</p>
-
-                    <div className="dashboard-actions">
-                      {suggestion.suggestion_type ===
-                      "move_incomplete_event_tomorrow" ? (
-                        <button
-                          type="button"
-                          className="dashboard-primary-button"
-                          onClick={() =>
-                            handleAddSuggestionToCalendar(suggestion)
-                          }
-                          disabled={assistantActionId === suggestion.id}
-                        >
-                          明日に移す
-                        </button>
-                      ) : isSchedulableSuggestion(suggestion) ? (
-                        <button
-                          type="button"
-                          className="dashboard-primary-button"
-                          onClick={() =>
-                            handleAddSuggestionToCalendar(suggestion)
-                          }
-                          disabled={assistantActionId === suggestion.id}
-                        >
-                          予定に追加
-                        </button>
-                      ) : null}
-
-                      <button
-                        type="button"
-                        className="dashboard-secondary-button"
-                        onClick={() => handleDismissSuggestion(suggestion.id)}
-                        disabled={assistantActionId === suggestion.id}
-                      >
-                        無視
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </DashboardPanel>
-
-          <div className="dashboard-panels-grid">
-            <DashboardPanel title="今日の予定" description="今日の時間割と予定ステータスです。">
-              {todayEvents.length === 0 ? (
-                <p className="dashboard-empty-message">今日の予定はまだありません。</p>
-              ) : (
-                <div className="dashboard-list">
-                  {todayEvents.map((event) => (
-                    <div key={event.id} className="dashboard-item">
-                      <div className="dashboard-item__header">
-                        <strong>{event.title}</strong>
-                        <span className="dashboard-status-pill">{statusLabel(event.status)}</span>
-                      </div>
-                      <p className="dashboard-muted-text">
-                        {formatTime(event.start_time)} - {formatTime(event.end_time)} / {formatMinutes(getEventMinutes(event))}
-                      </p>
-                    </div>
-                  ))}
+            <div className="secretary-center-column">
+              <section className="secretary-card secretary-summary-card">
+                <div className="secretary-card__title"><span>◷</span><h2>今日のサマリー</h2></div>
+                <div className="secretary-kpis">
+                  <div><span>計画時間</span><strong>{formatMinutes(displayPlannedMinutes)}</strong></div>
+                  <div><span>実績時間</span><strong>{formatMinutes(displayActualMinutes)}</strong></div>
+                  <div><span>達成率</span><strong>{displayAchievementRate}%</strong><small>{incompleteEvents.length}件残り</small></div>
                 </div>
-              )}
-            </DashboardPanel>
+                <div className="secretary-goal-row"><span>{isTodaySelected ? "今日" : "選択日"}の計画合計：{formatMinutes(displayPlannedMinutes)}</span><strong>{displayAchievementRate}%</strong></div>
+                <ProgressBar value={displayAchievementRate} label={`達成率 ${displayAchievementRate}%`} />
+                <button type="button" className="secretary-wide-button" onClick={() => navigate("/reflections")}>振り返りを記録する</button>
+              </section>
 
-            <DashboardPanel title="プロジェクト進捗" description="予想・実績・残り工数を進捗バーで確認します。">
-              {progressProjects.length === 0 ? (
-                <p className="dashboard-empty-message">表示できるプロジェクトはありません。</p>
-              ) : (
-                <div className="dashboard-list">
-                  {progressProjects.map((project) => {
+              <section className="secretary-card">
+                <div className="secretary-card__title"><span>□</span><h2>プロジェクト進捗</h2></div>
+                <div className="secretary-project-list">
+                  {progressProjects.slice(0, 4).map((project) => {
                     const estimatedMinutes = getEffectiveProjectEstimatedMinutes(
                       project,
                       plannedMinutesByProjectId[project.id] ?? 0,
                       taskEstimatedMinutesByProjectId[project.id] ?? 0,
                     );
-                    const progressRate = getProjectProgressRate(
-                      project,
-                      estimatedMinutes,
-                    );
-                    const remainingMinutes = getRemainingMinutes(
-                      project,
-                      estimatedMinutes,
-                    );
+                    const progressRate = getProjectProgressRate(project, estimatedMinutes);
+                    const remainingMinutes = getRemainingMinutes(project, estimatedMinutes);
 
                     return (
-                      <div key={project.id} className="dashboard-item dashboard-item--progress">
-                        <div className="dashboard-item__header">
-                          <strong>{project.title}</strong>
-                          <span className="dashboard-progress-rate">{progressRate}%</span>
-                        </div>
-
-                        <ProgressBar
-                          value={progressRate}
-                          label={`${project.title}の進捗率 ${progressRate}%`}
-                        />
-
-                        <div className="dashboard-metrics-row">
-                          <span>予想 {formatMinutes(estimatedMinutes)}</span>
-                          <span>実績 {formatMinutes(project.actual_minutes)}</span>
-                          <span>残り {formatMinutes(remainingMinutes)}</span>
-                        </div>
-                        <p className="dashboard-muted-text">
-                          状態: {statusLabel(project.status)}
-                        </p>
+                      <div key={project.id} className="secretary-project-row">
+                        <strong>{project.title}</strong>
+                        <span>{progressRate}%</span>
+                        <ProgressBar value={progressRate} label={`${project.title} ${progressRate}%`} />
+                        <small>{formatMinutes(project.actual_minutes)} / {formatMinutes(estimatedMinutes)}</small>
+                        <small>{formatMinutes(remainingMinutes)}</small>
                       </div>
                     );
                   })}
                 </div>
-              )}
-            </DashboardPanel>
+                <Link className="secretary-link" to="/projects">すべてのプロジェクトを見る</Link>
+              </section>
+            </div>
 
-            <DashboardPanel title="見積もり精度" description="予定時間と実績時間のズレを確認します。">
-              {!estimationAccuracy ||
-              estimationAccuracy.total_task_count === 0 ? (
-                <p className="dashboard-empty-message">実績があるタスクがまだありません。</p>
-              ) : (
-                <div className="dashboard-list">
-                  <div className="dashboard-item">
-                    <div className="dashboard-item__header">
-                      <strong>予定時間と実績時間の差分</strong>
-                      <span className="dashboard-status-pill">
-                        対象 {estimationAccuracy.total_task_count}件
-                      </span>
-                    </div>
-                    <div className="dashboard-estimation-bars">
-                      <MetricProgress
-                        label="過小見積"
-                        value={estimationAccuracy.underestimation_rate}
-                      />
-                      <MetricProgress
-                        label="適正"
-                        value={estimationAccuracy.accurate_estimation_rate}
-                      />
-                      <MetricProgress
-                        label="過大見積"
-                        value={estimationAccuracy.overestimation_rate}
-                      />
-                    </div>
-                    <p className="dashboard-muted-text">
-                      平均予定 {formatMinutes(estimationAccuracy.average_estimated_minutes)} / 平均実績 {formatMinutes(estimationAccuracy.average_actual_minutes)} / 差分 {formatSignedMinutes(estimationAccuracy.average_difference_minutes)}
-                    </p>
-                    <p className="dashboard-muted-text">
-                      判定基準: ±{Math.round(estimationAccuracy.estimation_threshold_rate * 100)}%以内は適正
-                    </p>
-                  </div>
-
-                  <div className="dashboard-item">
-                    <strong>タスク種別ごとの傾向</strong>
-                    {estimationAccuracy.task_type_trends.length === 0 ? (
-                      <p className="dashboard-muted-text">
-                        傾向を表示できるデータがありません。
-                      </p>
-                    ) : (
-                      <div className="dashboard-mini-list">
-                        {estimationAccuracy.task_type_trends.map((trend) => (
-                          <div key={trend.task_type} className="dashboard-mini-list__item">
-                            <p>{priorityLabel(trend.task_type)}</p>
-                            <p className="dashboard-muted-text">
-                              過小 {trend.underestimation_rate}% / 適正 {trend.accurate_estimation_rate}% / 過大 {trend.overestimation_rate}% / 平均差分 {formatSignedMinutes(trend.average_difference_minutes)}
-                            </p>
-                            <p className="dashboard-muted-text">
-                              {trend.task_count}件 / 平均予定 {formatMinutes(trend.average_estimated_minutes)} / 平均実績 {formatMinutes(trend.average_actual_minutes)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="dashboard-item">
-                    <strong>最近の見積もり差分</strong>
-                    <div className="dashboard-mini-list">
-                      {estimationAccuracy.recent_tasks.map((task) => (
-                        <div key={task.id} className="dashboard-mini-list__item">
-                          <p>{task.title}</p>
-                          <p className="dashboard-muted-text">
-                            {task.project_title} / 予定 {formatMinutes(task.estimated_minutes)} / 実績 {formatMinutes(task.actual_minutes)} / 差分 {formatSignedMinutes(task.difference_minutes)} / 判定 {estimationJudgementLabel(task.estimation_judgement)}
-                          </p>
-                        </div>
-                      ))}
+            <div className="secretary-right-column">
+              <section className="secretary-card secretary-assistant-card">
+                <div className="secretary-card__title"><span>🤖</span><h2>AI秘書からの提案</h2></div>
+                {assistantMessage && <p className="dashboard-info-message">{assistantMessage}</p>}
+                {topSuggestions.length === 0 ? (
+                  <p className="dashboard-empty-message">今すぐ表示する提案はありません。</p>
+                ) : topSuggestions.map((suggestion) => (
+                  <div key={suggestion.id} className="secretary-suggestion">
+                    <strong>{suggestion.title}</strong>
+                    <p>{suggestion.message}</p>
+                    <div className="secretary-suggestion__actions">
+                      {suggestion.suggestion_type === "move_incomplete_event_tomorrow" ? (
+                        <button type="button" onClick={() => handleAddSuggestionToCalendar(suggestion)} disabled={assistantActionId === suggestion.id}>明日に移す</button>
+                      ) : isSchedulableSuggestion(suggestion) ? (
+                        <button type="button" onClick={() => handleAddSuggestionToCalendar(suggestion)} disabled={assistantActionId === suggestion.id}>予定に追加</button>
+                      ) : null}
+                      <button type="button" onClick={() => handleDismissSuggestion(suggestion.id)} disabled={assistantActionId === suggestion.id}>このままにする</button>
                     </div>
                   </div>
-                </div>
-              )}
-            </DashboardPanel>
+                ))}
+              </section>
 
-            <DashboardPanel title="緊急タスク分析" description="割り込みによる計画崩れを見える化します。">
-              {!urgentTaskAnalysis || urgentTaskAnalysis.urgent_task_count === 0 ? (
-                <p className="dashboard-empty-message">直近30日間の緊急タスクはまだありません。</p>
-              ) : (
-                <div className="dashboard-list">
-                  <div className="dashboard-item">
-                    <div className="dashboard-item__header">
-                      <strong>計画崩壊要因</strong>
-                      <span className="dashboard-progress-rate">{urgentCollapseRate}%</span>
-                    </div>
-                    <ProgressBar
-                      value={urgentCollapseRate}
-                      label={`緊急対応による計画崩壊率 ${urgentCollapseRate}%`}
-                    />
-                    <p className="dashboard-muted-text">
-                      直近{urgentTaskAnalysis.days}日間で、緊急タスク{urgentTaskAnalysis.urgent_task_count}件 / 実行ログ{urgentTaskAnalysis.urgent_work_log_count}件 / 緊急対応時間{formatMinutes(urgentTaskAnalysis.urgent_actual_minutes)}
-                    </p>
-                    <p className="dashboard-muted-text">
-                      予定時間 {formatMinutes(urgentTaskAnalysis.planned_minutes)} に対して、緊急対応が {urgentTaskAnalysis.plan_collapse_rate}% を占めています。
-                    </p>
-                    <p className="dashboard-muted-text">
-                      未完了 {urgentTaskAnalysis.active_urgent_task_count}件 / 完了 {urgentTaskAnalysis.completed_urgent_task_count}件
-                    </p>
-                  </div>
-
-                  <div className="dashboard-item">
-                    <strong>割り込み理由別</strong>
-                    {urgentTaskAnalysis.interruption_reasons.length === 0 ? (
-                      <p className="dashboard-muted-text">理由別に集計できるデータがありません。</p>
-                    ) : (
-                      <div className="dashboard-mini-list">
-                        {urgentTaskAnalysis.interruption_reasons.map((reason) => (
-                          <div key={reason.reason} className="dashboard-mini-list__item">
-                            <p>{reason.reason}</p>
-                            <p className="dashboard-muted-text">
-                              {reason.urgent_task_count}件 / {formatMinutes(reason.actual_minutes)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </DashboardPanel>
-
-            <DashboardPanel title="進行中タスク" description="現在動いているタスクと工数です。">
-              {inProgressTasks.length === 0 ? (
-                <p className="dashboard-empty-message">進行中タスクはありません。</p>
-              ) : (
-                <div className="dashboard-list">
-                  {inProgressTasks.map((task) => (
-                    <div key={task.id} className="dashboard-item">
-                      <strong>{task.title}</strong>
-                      <p className="dashboard-muted-text">
-                        実績 {formatMinutes(task.actual_minutes)} / 見積 {formatMinutes(task.estimated_minutes)}
-                      </p>
-                      <p className="dashboard-muted-text">
-                        優先度: {task.priority} / エネルギー: {task.energy_level}
-                      </p>
+              <section className="secretary-card">
+                <div className="secretary-card__title"><span>□</span><h2>スキマ時間の提案</h2></div>
+                <p className="secretary-muted">{gapMinutes == null ? "次の予定までの空き時間は現在ありません" : <>次の予定まで <strong>{formatMinutes(gapMinutes)}</strong> の空き時間があります</>}</p>
+                <div className="secretary-gap-list">
+                  {gapTaskCandidates.map((task) => (
+                    <div key={task.id} className="secretary-gap-row">
+                      <span>✓</span><strong>{task.title}</strong><small>{formatMinutes(Math.max(10, task.estimated_minutes || 10))}</small><em>{task.energy_level || "低集中"}</em><button type="button" onClick={() => handleAddTaskToCalendar(task)} disabled={assistantActionId === `task-${task.id}`}>追加</button>
                     </div>
                   ))}
                 </div>
-              )}
-            </DashboardPanel>
+                <Link className="secretary-link" to="/gap-tasks">すべてのスキマタスクを見る</Link>
+              </section>
+            </div>
+          </div>
 
-            <DashboardPanel title="未完了予定" description="今日中に残っている予定です。">
-              {incompleteEvents.length === 0 ? (
-                <p className="dashboard-empty-message">今日の未完了予定はありません。</p>
-              ) : (
-                <div className="dashboard-list">
-                  {incompleteEvents.map((event) => (
-                    <div key={event.id} className="dashboard-item">
-                      <div className="dashboard-item__header">
-                        <strong>{event.title}</strong>
-                        <span className="dashboard-status-pill">{statusLabel(event.status)}</span>
-                      </div>
-                      <p className="dashboard-muted-text">
-                        {formatTime(event.start_time)} - {formatTime(event.end_time)}
-                      </p>
-                    </div>
+          <div className="secretary-lower-grid">
+            <section className="secretary-card">
+              <div className="secretary-card__title"><span>◌</span><h2>今週の時間配分</h2></div>
+              <div className="secretary-donut-row">
+                <div className="secretary-donut"><span>合計<br />{formatMinutes(distributionTotalMinutes)}</span></div>
+                <ul>
+                  {distributionProjects.length === 0 ? (
+                    <li>実績データがまだありません</li>
+                  ) : distributionProjects.map(({ project, minutes }, index) => (
+                    <li key={project.id}><i data-index={index} />{project.title}<b>{formatMinutes(minutes)}</b></li>
                   ))}
-                </div>
-              )}
-            </DashboardPanel>
+                </ul>
+              </div>
+            </section>
+
+            <section className="secretary-card secretary-estimation-card">
+              <div className="secretary-card__title"><span>♙</span><h2>工数見積りの精度</h2></div>
+              <strong className="secretary-big-number">{estimationAccuracy?.underestimation_rate ?? 0}%</strong>
+              <p className="secretary-muted">開発系タスクを中心に見積りとの差分を確認できます。進行中 {inProgressTasks.length}件 / 計画崩れ {urgentCollapseRate}%</p>
+              <Link className="secretary-link" to="/work-logs">詳細な分析を見る</Link>
+            </section>
+          </div>
+
+          <div className="secretary-bottom-strip">
+            <section className="secretary-card secretary-quick-card">
+              <strong>よく使うタスク</strong>
+              {tasks.slice(0, 5).map((task) => (
+                <button key={task.id} type="button" onClick={() => handleAddTaskToCalendar(task)} disabled={assistantActionId === `task-${task.id}`}>
+                  {task.title} {formatMinutes(task.estimated_minutes || 30)}
+                </button>
+              ))}
+              <button type="button" onClick={() => navigate("/tasks")}>＋ カスタム</button>
+            </section>
+            <section className="secretary-card"><strong>繰り返し予定</strong><p className="secretary-muted">朝のルーティン・勉強時間などをカレンダーで管理できます</p><button type="button" className="secretary-wide-button" onClick={handleGenerateRecurringEventsFromDashboard}>管理する</button></section>
+            <section className="secretary-card"><strong>昨日の予定をコピー</strong><button type="button" className="secretary-wide-button" onClick={handleCopyYesterdayEventsToSelectedDate} disabled={assistantActionId === "copy-yesterday"}>コピーする</button></section>
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+function DashboardTimeline({ events, onAddEvent }: { events: CalendarEvent[]; onAddEvent: () => void }) {
+  const startHour = 7;
+  const endHour = 23;
+  const hourHeight = 64;
+  const now = new Date();
+  const nowTop = ((now.getHours() - startHour) * 60 + now.getMinutes()) / 60 * hourHeight;
+
+  return (
+    <section className="secretary-timeline-card">
+      <div className="secretary-timeline">
+        {Array.from({ length: endHour - startHour + 1 }, (_, index) => startHour + index).map((hour) => (
+          <div key={hour} className="secretary-time-row"><span>{hour}:00</span></div>
+        ))}
+        <div className="secretary-now-line" style={{ top: `${Math.max(0, nowTop)}px` }}><span>{now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</span></div>
+        {events.map((event, index) => {
+          const start = new Date(event.start_time);
+          const end = new Date(event.end_time);
+          const top = ((start.getHours() - startHour) * 60 + start.getMinutes()) / 60 * hourHeight;
+          const height = Math.max(44, (Math.max(15, (end.getTime() - start.getTime()) / 60000) / 60) * hourHeight);
+          const tone = ["blue", "green", "orange", "purple", "yellow", "gray", "rose"][index % 7];
+
+          return (
+            <article key={event.id} className={`secretary-timeline-event secretary-timeline-event--${tone}`} style={{ top: `${top}px`, height: `${height}px` }}>
+              <strong>{event.title}</strong>
+              <span>{formatTime(event.start_time)} - {formatTime(event.end_time)}</span>
+              {event.description && <small>{event.description}</small>}
+            </article>
+          );
+        })}
+        <button type="button" className="secretary-add-slot" onClick={onAddEvent}>＋ 予定を追加</button>
+      </div>
     </section>
   );
 }
@@ -926,3 +1031,13 @@ function MetricProgress({ label, value }: { label: string; value: number }) {
     </div>
   );
 }
+
+void priorityBadgeStyle;
+void achievementMessage;
+void statusLabel;
+void priorityLabel;
+void formatSignedMinutes;
+void estimationJudgementLabel;
+void SummaryCard;
+void DashboardPanel;
+void MetricProgress;

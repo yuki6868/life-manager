@@ -19,7 +19,6 @@ class AssistantSuggestionType(StrEnum):
 
     NO_TODAY_EVENTS = "no_today_events"
     HIGH_PRIORITY_TASK = "high_priority_task"
-    GMAIL_CHECK = "gmail_check"
     UNSTARTED_EVENT = "unstarted_event"
     DELAYED_EVENT = "delayed_event"
     GAP_TIME_TASK = "gap_time_task"
@@ -149,7 +148,6 @@ def build_morning_suggestions(
     *,
     has_today_events: bool,
     high_priority_tasks: list[HighPriorityTaskCandidate],
-    include_gmail_check: bool = True,
 ) -> list[AssistantSuggestion]:
     """朝に出す提案を生成する。"""
     suggestions: list[AssistantSuggestion] = []
@@ -196,23 +194,6 @@ def build_morning_suggestions(
                     "urgency": task.urgency,
                     "importance": task.importance,
                 },
-            )
-        )
-
-    if include_gmail_check:
-        suggestions.append(
-            AssistantSuggestion(
-                id="morning-gmail-check",
-                suggestion_type=AssistantSuggestionType.GMAIL_CHECK,
-                title="朝のメール確認を短く入れましょう",
-                message=(
-                    "重要な連絡で今日の予定が変わる可能性があります。"
-                    "先に5〜10分だけGmailを確認するのがおすすめです。"
-                ),
-                priority="medium",
-                action_label="Gmailを確認する",
-                action_target="gmail",
-                metadata={"recommended_minutes": 10},
             )
         )
 

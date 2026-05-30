@@ -423,7 +423,7 @@ export default function TimerPage() {
             <input
               value={urgentTitle}
               onChange={(e) => setUrgentTitle(e.target.value)}
-              placeholder="例：急ぎの問い合わせに返信"
+              placeholder="例：急ぎの連絡対応"
               disabled={isCreatingUrgentTask || isSaving}
               style={{ display: "block", width: "100%", padding: "8px" }}
             />

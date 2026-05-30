@@ -170,7 +170,7 @@ export default function ReflectionsPage() {
         <ReflectionTextarea
           label="改善点"
           value={form.improvements}
-          placeholder="例：朝一でメール確認をせず、先に制作時間を確保する"
+          placeholder="例：朝一で連絡確認を広げず、先に制作時間を確保する"
           onChange={(value) => updateFormField("improvements", value)}
         />
 

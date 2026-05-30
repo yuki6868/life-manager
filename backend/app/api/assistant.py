@@ -124,7 +124,6 @@ async def get_morning_suggestions(db: AsyncSession = Depends(get_db)):
     suggestions = build_morning_suggestions(
         has_today_events=has_today_events,
         high_priority_tasks=high_priority_tasks,
-        include_gmail_check=True,
     )
 
     return AssistantSuggestionsResponse(

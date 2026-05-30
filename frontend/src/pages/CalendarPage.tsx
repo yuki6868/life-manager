@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
+import { useLocation } from "react-router-dom";
 import {
   createCalendarEvent,
   deleteCalendarEvent,
@@ -241,12 +242,14 @@ type DraggingCalendarEvent = {
 };
 
 export default function CalendarPage() {
+  const location = useLocation();
+  const initialDate = new URLSearchParams(location.search).get("date") ?? toDateInputValue(new Date());
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [frequentTasks, setFrequentTasks] = useState<FrequentTask[]>([]);
   const [yesterdayTasks, setYesterdayTasks] = useState<ReusableCalendarTask[]>([]);
   const [recentTasks, setRecentTasks] = useState<ReusableCalendarTask[]>([]);
-  const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()));
+  const [selectedDate, setSelectedDate] = useState(initialDate);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [timelineSelection, setTimelineSelection] =
@@ -332,6 +335,14 @@ export default function CalendarPage() {
     return () => window.clearInterval(timerId);
   }, []);
 
+  useEffect(() => {
+    if (location.hash) {
+      window.setTimeout(() => {
+        document.querySelector(location.hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }
+  }, [location.hash]);
+
   const dayEvents = useMemo(() => {
     return events
       .filter((event) => isSameDate(event.start_time, selectedDate))
@@ -374,6 +385,27 @@ export default function CalendarPage() {
     void nowTick;
     return getCurrentTimeLineTop(selectedDate);
   }, [nowTick, selectedDate]);
+
+  const plannedTodayMinutes = useMemo(() => {
+    return dayEvents.reduce(
+      (total, event) => total + getDurationMinutes(event.start_time, event.end_time),
+      0
+    );
+  }, [dayEvents]);
+
+  const actualTodayMinutes = useMemo(() => {
+    return dayWorkLogs.reduce((total, workLog) => total + workLog.duration_minutes, 0);
+  }, [dayWorkLogs]);
+
+  const achievementRate = plannedTodayMinutes > 0
+    ? Math.round((actualTodayMinutes / plannedTodayMinutes) * 100)
+    : 0;
+
+  function moveSelectedDate(days: number) {
+    const date = new Date(`${selectedDate}T00:00`);
+    date.setDate(date.getDate() + days);
+    setSelectedDate(toDateInputValue(date));
+  }
 
   function resetForm() {
     setTitle("");
@@ -725,875 +757,428 @@ export default function CalendarPage() {
   );
 
   return (
-    <div style={{ padding: "32px" }}>
-      <h1>カレンダー</h1>
+    <div className="calendar-page">
+      <div className="calendar-toolbar">
+        <div>
+          <p className="calendar-toolbar__eyebrow">Daily timeline</p>
+          <h1 className="calendar-toolbar__title">{selectedDate} の予定・実績</h1>
+          <p className="calendar-toolbar__description">
+            空き時間をドラッグして予定作成。予定ブロックはそのままドラッグして移動できます。
+          </p>
+        </div>
 
-      <div style={{ marginBottom: "24px" }}>
-        <label>表示日 </label>
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          style={{ padding: "8px" }}
-        />
+        <div className="calendar-toolbar__actions">
+          <button type="button" className="calendar-icon-button" onClick={() => moveSelectedDate(-1)}>
+            ‹
+          </button>
+          <input
+            className="calendar-date-input"
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+          />
+          <button type="button" className="calendar-icon-button" onClick={() => moveSelectedDate(1)}>
+            ›
+          </button>
+          <button type="button" className="calendar-button calendar-button--ghost" onClick={() => setSelectedDate(toDateInputValue(new Date()))}>
+            今日
+          </button>
+        </div>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        style={{
-          display: "grid",
-          gap: "12px",
-          maxWidth: "520px",
-          marginBottom: "32px",
-          padding: "16px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <h2>{editingEvent ? "予定編集" : "予定追加"}</h2>
-
-        <label>
-          タスクから予定化
-          <select
-            value={selectedTaskId}
-            onChange={(e) => handleSelectTask(e.target.value)}
-            style={{ display: "block", padding: "8px", width: "100%" }}
-          >
-            <option value="">タスクを選択しない</option>
-            {tasks.map((task) => (
-              <option key={task.id} value={task.id}>
-                {task.title}（{task.estimated_minutes}分）
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="例：React実装"
-          style={{ padding: "8px" }}
-        />
-
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="メモ"
-          style={{ padding: "8px", height: "72px" }}
-        />
-
-        <label>
-          開始
-          <input
-            type="datetime-local"
-            value={startTime}
-            onChange={(e) => {
-              const nextStartTime = e.target.value;
-              setStartTime(nextStartTime);
-
-              const task = tasks.find(
-                (item) => item.id === Number(selectedTaskId)
-              );
-
-              if (task) {
-                const start = new Date(nextStartTime);
-                const end = new Date(
-                  start.getTime() + task.estimated_minutes * 60000
-                );
-                setEndTime(toDateTimeLocalValue(end));
-              }
-            }}
-            style={{ display: "block", padding: "8px", width: "100%" }}
-          />
-        </label>
-
-        <label>
-          終了
-          <input
-            type="datetime-local"
-            value={endTime}
-            onChange={(e) => setEndTime(e.target.value)}
-            style={{ display: "block", padding: "8px", width: "100%" }}
-          />
-        </label>
-
-        <button type="submit">
-          {editingEvent ? "予定を更新" : "予定を追加"}
-        </button>
-
-        {editingEvent && (
-          <button type="button" onClick={resetForm}>
-            キャンセル
-          </button>
-        )}
-      </form>
-
-
-      <section
-        style={{
-          maxWidth: "760px",
-          marginBottom: "32px",
-          padding: "16px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <h2>繰り返し予定</h2>
-        <p style={{ color: "#666", marginTop: 0 }}>
-          毎日・平日・毎週のルールを作成して、今日以降30日分の予定を自動生成できます。
-        </p>
-
-        <form
-          onSubmit={handleCreateRecurrenceRule}
-          style={{ display: "grid", gap: "12px", marginBottom: "20px" }}
-        >
-          <label>
-            タスクから作成
-            <select
-              value={recurrenceTaskId}
-              onChange={(e) => handleSelectRecurrenceTask(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            >
-              <option value="">タスクを選択しない</option>
-              {tasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.title}（{task.estimated_minutes}分）
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <input
-            value={recurrenceTitle}
-            onChange={(e) => setRecurrenceTitle(e.target.value)}
-            placeholder="例：毎朝のメール確認"
-            style={{ padding: "8px" }}
-          />
-
-          <textarea
-            value={recurrenceDescription}
-            onChange={(e) => setRecurrenceDescription(e.target.value)}
-            placeholder="メモ"
-            style={{ padding: "8px", height: "64px" }}
-          />
-
-          <label>
-            繰り返し
-            <select
-              value={recurrenceFrequency}
-              onChange={(e) =>
-                setRecurrenceFrequency(e.target.value as RecurrenceFrequency)
-              }
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            >
-              <option value="daily">毎日</option>
-              <option value="weekday">平日</option>
-              <option value="weekly">毎週・曜日指定</option>
-            </select>
-          </label>
-
-          {recurrenceFrequency === "weekly" && (
-            <label>
-              曜日
-              <select
-                value={recurrenceWeekday}
-                onChange={(e) => setRecurrenceWeekday(e.target.value)}
-                style={{ display: "block", padding: "8px", width: "100%" }}
-              >
-                {WEEKDAYS.map((weekday, index) => (
-                  <option key={weekday} value={index}>
-                    {weekday}曜日
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          <label>
-            開始時刻
-            <input
-              type="time"
-              value={recurrenceStartTime}
-              onChange={(e) => setRecurrenceStartTime(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            />
-          </label>
-
-          <label>
-            所要時間（分）
-            <input
-              type="number"
-              min="1"
-              value={recurrenceDurationMinutes}
-              onChange={(e) => setRecurrenceDurationMinutes(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            />
-          </label>
-
-          <button type="submit">繰り返しルールを追加</button>
-        </form>
-
-        <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
-          {recurrenceRules.length === 0 ? (
-            <p>繰り返しルールはまだありません。</p>
-          ) : (
-            recurrenceRules.map((rule) => (
-              <div
-                key={rule.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: "12px",
-                  padding: "10px 12px",
-                  border: "1px solid #eee",
-                  borderRadius: "10px",
-                }}
-              >
-                <div>
-                  <strong>{rule.title}</strong>
-                  <div style={{ fontSize: "13px", color: "#666" }}>
-                    {formatFrequency(rule)} / {rule.start_time.slice(0, 5)} / {rule.duration_minutes}分
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleDeleteRecurrenceRule(rule.id)}
-                >
-                  削除
-                </button>
-              </div>
-            ))
-          )}
+      <div className="calendar-summary-grid">
+        <div className="calendar-summary-card">
+          <span>予定時間</span>
+          <strong>{formatMinutes(plannedTodayMinutes)}</strong>
         </div>
-
-        <button type="button" onClick={handleGenerateRecurringEvents}>
-          繰り返し予定を生成
-        </button>
-
-        {generateMessage && (
-          <p style={{ color: "#32627a", marginBottom: 0 }}>{generateMessage}</p>
-        )}
-      </section>
-
-      <section
-        style={{
-          maxWidth: "760px",
-          marginBottom: "32px",
-          padding: "16px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <h2>よく使うタスク</h2>
-        <p style={{ color: "#666", marginTop: 0 }}>
-          過去に予定へ追加した回数が多いタスクです。開始時刻を決めて押すと、すぐ予定に入れられます。
-        </p>
-
-        {frequentTasks.length === 0 ? (
-          <p>まだよく使うタスクはありません。予定を追加すると表示されます。</p>
-        ) : (
-          <div style={{ display: "grid", gap: "8px" }}>
-            {frequentTasks.map((task) => (
-              <div
-                key={`${task.task_id ?? "event"}-${task.title}`}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: "12px",
-                  padding: "10px 12px",
-                  border: "1px solid #eee",
-                  borderRadius: "10px",
-                }}
-              >
-                <div>
-                  <strong>{task.title}</strong>
-                  <div style={{ fontSize: "13px", color: "#666" }}>
-                    {task.estimated_minutes}分 / {task.usage_count}回使用
-                  </div>
-                </div>
-
-                <button type="button" onClick={() => handleAddFrequentTask(task)}>
-                  予定に追加
-                </button>
-              </div>
-            ))}
+        <div className="calendar-summary-card">
+          <span>実績時間</span>
+          <strong>{formatMinutes(actualTodayMinutes)}</strong>
+        </div>
+        <div className="calendar-summary-card calendar-summary-card--accent">
+          <span>達成率</span>
+          <strong>{achievementRate}%</strong>
+          <div className="calendar-progress" aria-label="今日の達成率">
+            <span style={{ width: `${Math.min(achievementRate, 100)}%` }} />
           </div>
-        )}
-      </section>
+        </div>
+      </div>
 
+      {timelineMessage && <p className="calendar-message">{timelineMessage}</p>}
 
-      <section
-        style={{
-          maxWidth: "760px",
-          marginBottom: "32px",
-          padding: "16px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <h2>昨日やったタスク</h2>
-        <p style={{ color: "#666", marginTop: 0 }}>
-          昨日の予定を、時刻はそのままで表示日にコピーできます。
-        </p>
-
-        {yesterdayTasks.length === 0 ? (
-          <p>昨日の予定はまだありません。</p>
-        ) : (
-          <div style={{ display: "grid", gap: "8px" }}>
-            {yesterdayTasks.map((task) => (
-              <div
-                key={task.source_event_id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: "12px",
-                  padding: "10px 12px",
-                  border: "1px solid #eee",
-                  borderRadius: "10px",
-                }}
-              >
-                <div>
-                  <strong>{task.title}</strong>
-                  <div style={{ fontSize: "13px", color: "#666" }}>
-                    {task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分
-                  </div>
-                </div>
-
-                <button type="button" onClick={() => handleCopyReusableTask(task)}>
-                  表示日にコピー
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section
-        style={{
-          maxWidth: "760px",
-          marginBottom: "32px",
-          padding: "16px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <h2>最近やったタスク</h2>
-        <p style={{ color: "#666", marginTop: 0 }}>
-          最近予定に入れたタスクを重複なしで表示します。
-        </p>
-
-        {recentTasks.length === 0 ? (
-          <p>最近の予定はまだありません。</p>
-        ) : (
-          <div style={{ display: "grid", gap: "8px" }}>
-            {recentTasks.map((task) => (
-              <div
-                key={task.source_event_id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: "12px",
-                  padding: "10px 12px",
-                  border: "1px solid #eee",
-                  borderRadius: "10px",
-                }}
-              >
-                <div>
-                  <strong>{task.title}</strong>
-                  <div style={{ fontSize: "13px", color: "#666" }}>
-                    元の時刻 {task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分
-                  </div>
-                </div>
-
-                <button type="button" onClick={() => handleCopyReusableTask(task)}>
-                  表示日にコピー
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section
-        style={{
-          maxWidth: "760px",
-          marginBottom: "32px",
-          padding: "16px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-        }}
-      >
-        <h2>実績を手入力</h2>
-        <p style={{ color: "#666", marginTop: 0 }}>
-          タイマーを使わなかった作業も、開始・終了時刻を入力して実績カレンダーへ追加できます。
-        </p>
-
-        <form
-          onSubmit={handleCreateActualLog}
-          style={{ display: "grid", gap: "12px" }}
-        >
-          <label>
-            予定に紐づける
-            <select
-              value={actualCalendarEventId}
-              onChange={(e) => handleSelectActualEvent(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            >
-              <option value="">予定に紐づけない</option>
-              {dayEvents.map((event) => (
-                <option key={event.id} value={event.id}>
-                  {event.title}（{event.start_time.slice(11, 16)} - {event.end_time.slice(11, 16)}）
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            タスク
-            <select
-              value={actualTaskId}
-              onChange={(e) => setActualTaskId(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            >
-              <option value="">タスクを選択しない</option>
-              {tasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.title}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            開始
-            <input
-              type="datetime-local"
-              value={actualStartedAt}
-              onChange={(e) => setActualStartedAt(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            />
-          </label>
-
-          <label>
-            終了
-            <input
-              type="datetime-local"
-              value={actualEndedAt}
-              onChange={(e) => setActualEndedAt(e.target.value)}
-              style={{ display: "block", padding: "8px", width: "100%" }}
-            />
-          </label>
-
-          <textarea
-            value={actualMemo}
-            onChange={(e) => setActualMemo(e.target.value)}
-            placeholder="実績メモ"
-            style={{ padding: "8px", height: "72px" }}
-          />
-
-          <div>
-            <button type="submit" style={{ marginRight: "8px" }}>
-              実績を追加
-            </button>
-            <button type="button" onClick={resetActualForm}>
-              リセット
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <h2>{selectedDate} の予定・実績</h2>
-      <p style={{ color: "#64748b", marginTop: "-8px" }}>
-        予定タイムラインの空き時間をクリックまたはドラッグすると、その時間に予定を直接追加できます。予定ブロックはドラッグで時間移動できます。
-      </p>
-      {timelineMessage && (
-        <p
-          style={{
-            maxWidth: "1180px",
-            padding: "10px 12px",
-            borderRadius: "12px",
-            background: "#ecfeff",
-            color: "#0e7490",
-            fontWeight: 700,
-          }}
-        >
-          {timelineMessage}
-        </p>
-      )}
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "80px minmax(320px, 1fr) minmax(320px, 1fr)",
-          borderTop: "1px solid #eee",
-          position: "relative",
-          maxWidth: "1180px",
-          overflowX: "auto",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              height: "40px",
-              borderBottom: "1px solid #eee",
-              boxSizing: "border-box",
-            }}
-          />
-
-          {hours.map((hour) => (
-            <div
-              key={hour}
-              style={{
-                height: `${HOUR_HEIGHT}px`,
-                borderBottom: "1px solid #eee",
-                color: "#777",
-                textAlign: "right",
-                paddingRight: "12px",
-                boxSizing: "border-box",
-              }}
-            >
-              {String(hour).padStart(2, "0")}:00
+      <div className="calendar-layout">
+        <section className="calendar-panel calendar-panel--timeline">
+          <div className="calendar-panel__header">
+            <div>
+              <p className="calendar-panel__label">Timeline</p>
+              <h2>今日のタイムライン</h2>
             </div>
-          ))}
-        </div>
-
-        <div
-          style={{
-            borderLeft: "1px solid #eee",
-            borderRight: "1px solid #eee",
-          }}
-        >
-          <div
-            style={{
-              height: "40px",
-              borderBottom: "1px solid #eee",
-              boxSizing: "border-box",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 700,
-              background: "#fafafa",
-            }}
-          >
-            予定
+            <p className="calendar-panel__hint">15分単位で作成・移動</p>
           </div>
 
-          <div
-            onMouseDown={handlePlanTimelineMouseDown}
-            onMouseMove={handlePlanTimelineMouseMove}
-            onMouseUp={handlePlanTimelineMouseUp}
-            onMouseLeave={handlePlanTimelineMouseLeave}
-            style={{
-              position: "relative",
-              height: `${TIMELINE_HEIGHT}px`,
-              background:
-                "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
-              cursor: draggingEvent ? "grabbing" : timelineSelection ? "ns-resize" : "crosshair",
-              userSelect: "none",
-            }}
-          >
-            {currentTimeLineTop != null && (
+          <div className="calendar-timeline-grid">
+            <div className="calendar-time-axis">
+              <div className="calendar-timeline-heading" />
+              {hours.map((hour) => (
+                <div key={hour} className="calendar-time-cell">
+                  {String(hour).padStart(2, "0")}:00
+                </div>
+              ))}
+            </div>
+
+            <div className="calendar-lane calendar-lane--plan">
+              <div className="calendar-timeline-heading">予定</div>
               <div
-                aria-label="現在時刻"
+                className="calendar-lane__body"
+                onMouseDown={handlePlanTimelineMouseDown}
+                onMouseMove={handlePlanTimelineMouseMove}
+                onMouseUp={handlePlanTimelineMouseUp}
+                onMouseLeave={handlePlanTimelineMouseLeave}
                 style={{
-                  position: "absolute",
-                  top: `${currentTimeLineTop}px`,
-                  left: 0,
-                  right: 0,
-                  zIndex: 5,
-                  borderTop: "2px solid #ef4444",
-                  pointerEvents: "none",
+                  height: `${TIMELINE_HEIGHT}px`,
+                  cursor: draggingEvent ? "grabbing" : timelineSelection ? "ns-resize" : "crosshair",
                 }}
               >
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "8px",
-                    top: "-11px",
-                    padding: "2px 8px",
-                    borderRadius: "999px",
-                    background: "#ef4444",
-                    color: "#fff",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    boxShadow: "0 4px 10px rgba(239, 68, 68, 0.25)",
-                  }}
-                >
-                  NOW
-                </span>
-              </div>
-            )}
+                {currentTimeLineTop != null && (
+                  <div className="calendar-now-line" aria-label="現在時刻" style={{ top: `${currentTimeLineTop}px` }}>
+                    <span>NOW</span>
+                  </div>
+                )}
 
-            {timelineSelection && (() => {
-              const selection = normalizeSelection(
-                timelineSelection.startMinute,
-                timelineSelection.endMinute
-              );
-              const top = ((selection.start - START_HOUR * 60) / 60) * HOUR_HEIGHT;
-              const height = Math.max(
-                28,
-                ((selection.end - selection.start) / 60) * HOUR_HEIGHT
-              );
+                {timelineSelection && (() => {
+                  const selection = normalizeSelection(timelineSelection.startMinute, timelineSelection.endMinute);
+                  const top = ((selection.start - START_HOUR * 60) / 60) * HOUR_HEIGHT;
+                  const height = Math.max(28, ((selection.end - selection.start) / 60) * HOUR_HEIGHT);
 
-              return (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: `${top}px`,
-                    left: "10px",
-                    right: "10px",
-                    height: `${height}px`,
-                    border: "2px dashed #2563eb",
-                    borderRadius: "14px",
-                    background: "rgba(37, 99, 235, 0.08)",
-                    color: "#1d4ed8",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    pointerEvents: "none",
-                    zIndex: 4,
-                  }}
-                >
-                  {toSelectedDateTimeValue(selectedDate, selection.start).slice(11, 16)} - {toSelectedDateTimeValue(selectedDate, selection.end).slice(11, 16)} に追加
-                </div>
-              );
-            })()}
+                  return (
+                    <div
+                      className="calendar-selection-preview"
+                      style={{ top: `${top}px`, height: `${height}px` }}
+                    >
+                      {toSelectedDateTimeValue(selectedDate, selection.start).slice(11, 16)} - {toSelectedDateTimeValue(selectedDate, selection.end).slice(11, 16)} に追加
+                    </div>
+                  );
+                })()}
 
-            {dayEvents.map((event) => {
-              const previewStartTime =
-                draggingEvent?.eventId === event.id
-                  ? toSelectedDateTimeValue(
-                      selectedDate,
-                      draggingEvent.previewStartMinute
-                    )
-                  : event.start_time;
-              const previewEndTime =
-                draggingEvent?.eventId === event.id
-                  ? toSelectedDateTimeValue(
-                      selectedDate,
-                      draggingEvent.previewEndMinute
-                    )
-                  : event.end_time;
-              const isDragging = draggingEvent?.eventId === event.id;
-              const top = getTimelineTop(previewStartTime);
-              const height = getTimelineHeight(previewStartTime, previewEndTime);
-              const plannedMinutes = getDurationMinutes(
-                previewStartTime,
-                previewEndTime
-              );
-              const actualMinutes = actualMinutesByEventId[event.id] ?? 0;
-              const hasActualMinutes = actualMinutes > 0;
-              const linkedTask = event.task_id ? tasksById[event.task_id] : undefined;
-              const energyStyle = getTaskEnergyStyle(linkedTask);
-              const statusStyle = getEventStatusStyle(event.status);
+                {dayEvents.map((event) => {
+                  const previewStartTime = draggingEvent?.eventId === event.id
+                    ? toSelectedDateTimeValue(selectedDate, draggingEvent.previewStartMinute)
+                    : event.start_time;
+                  const previewEndTime = draggingEvent?.eventId === event.id
+                    ? toSelectedDateTimeValue(selectedDate, draggingEvent.previewEndMinute)
+                    : event.end_time;
+                  const isDragging = draggingEvent?.eventId === event.id;
+                  const top = getTimelineTop(previewStartTime);
+                  const height = getTimelineHeight(previewStartTime, previewEndTime);
+                  const plannedMinutes = getDurationMinutes(previewStartTime, previewEndTime);
+                  const actualMinutes = actualMinutesByEventId[event.id] ?? 0;
+                  const hasActualMinutes = actualMinutes > 0;
+                  const linkedTask = event.task_id ? tasksById[event.task_id] : undefined;
+                  const energyStyle = getTaskEnergyStyle(linkedTask);
+                  const statusStyle = getEventStatusStyle(event.status);
 
-              return (
-                <div
-                  key={event.id}
-                  data-calendar-event-card="true"
-                  onMouseDown={(e) => handleEventDragStart(e, event)}
-                  style={{
-                    position: "absolute",
-                    top: `${top}px`,
-                    left: "12px",
-                    right: "12px",
-                    height: `${height}px`,
-                    background: statusStyle.background,
-                    border: `1px solid ${statusStyle.border}33`,
-                    borderLeft: `5px solid ${statusStyle.border}`,
-                    borderRadius: "14px",
-                    padding: "10px",
-                    boxSizing: "border-box",
-                    overflow: "hidden",
-                    color: statusStyle.color,
-                    boxShadow: isDragging
-                      ? "0 18px 34px rgba(15, 23, 42, 0.18)"
-                      : "0 10px 22px rgba(15, 23, 42, 0.08)",
-                    cursor: isDragging ? "grabbing" : "grab",
-                    zIndex: isDragging ? 6 : 2,
-                    transform: isDragging ? "scale(1.01)" : "none",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: "8px",
-                    }}
-                  >
-                    <strong>{event.title}</strong>
-                    <span
+                  return (
+                    <div
+                      key={event.id}
+                      data-calendar-event-card="true"
+                      className={isDragging ? "calendar-event-card calendar-event-card--dragging" : "calendar-event-card"}
+                      onMouseDown={(e) => handleEventDragStart(e, event)}
                       style={{
-                        padding: "2px 8px",
-                        borderRadius: "999px",
-                        background: "rgba(255, 255, 255, 0.72)",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        whiteSpace: "nowrap",
+                        top: `${top}px`,
+                        height: `${height}px`,
+                        background: statusStyle.background,
+                        borderLeftColor: statusStyle.border,
+                        color: statusStyle.color,
                       }}
                     >
-                      {statusStyle.label}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "13px", marginTop: "4px" }}>
-                    {getTimeLabel(previewStartTime, previewEndTime)}
-                    （予定 {formatMinutes(plannedMinutes)}）
-                  </div>
+                      <div className="calendar-event-card__top">
+                        <strong>{event.title}</strong>
+                        <span>{statusStyle.label}</span>
+                      </div>
+                      <div className="calendar-event-card__time">
+                        {getTimeLabel(previewStartTime, previewEndTime)} / 予定 {formatMinutes(plannedMinutes)}
+                      </div>
+                      <div className="calendar-event-card__meta">
+                        <span style={{ background: energyStyle.background, color: energyStyle.color }}>
+                          エネルギー {energyStyle.label}
+                        </span>
+                        <span className={hasActualMinutes ? "calendar-event-card__actual--done" : ""}>
+                          実績 {hasActualMinutes ? formatMinutes(actualMinutes) : "未登録"}
+                        </span>
+                      </div>
+                      {hasActualMinutes && (
+                        <div className="calendar-event-card__comparison">
+                          {getComparisonLabel(actualMinutes, plannedMinutes)}
+                        </div>
+                      )}
+                      <div
+                        data-calendar-event-actions="true"
+                        className="calendar-event-card__actions"
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        <button type="button" onClick={() => handleEdit(event)}>編集</button>
+                        <button type="button" onClick={() => handleDelete(event.id)}>削除</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      marginTop: "6px",
-                      padding: "3px 8px",
-                      borderRadius: "999px",
-                      background: energyStyle.background,
-                      color: energyStyle.color,
-                      fontSize: "12px",
-                      fontWeight: 700,
-                    }}
-                  >
-                    エネルギー {energyStyle.label}
-                  </div>
+            <div className="calendar-lane calendar-lane--actual">
+              <div className="calendar-timeline-heading">実績</div>
+              <div className="calendar-lane__body" style={{ height: `${TIMELINE_HEIGHT}px` }}>
+                {currentTimeLineTop != null && (
+                  <div className="calendar-now-line calendar-now-line--actual" aria-label="現在時刻" style={{ top: `${currentTimeLineTop}px` }} />
+                )}
 
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      marginTop: "4px",
-                      fontWeight: 700,
-                      color: hasActualMinutes ? "#1f7a4d" : "#777",
-                    }}
-                  >
-                    実績 {hasActualMinutes ? formatMinutes(actualMinutes) : "未登録"}
-                    {hasActualMinutes && (
-                      <span style={{ marginLeft: "8px", fontWeight: 400 }}>
-                        {getComparisonLabel(actualMinutes, plannedMinutes)}
-                      </span>
-                    )}
-                  </div>
+                {dayWorkLogs.map((workLog) => {
+                  const top = getTimelineTop(workLog.started_at);
+                  const height = getTimelineHeight(workLog.started_at, workLog.ended_at);
+                  const plannedMinutes = workLog.planned_minutes;
+                  const differenceMinutes = workLog.difference_minutes;
 
-                  <div
-                    data-calendar-event-actions="true"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    style={{ marginTop: "8px" }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleEdit(event)}
-                      style={{ marginRight: "6px" }}
+                  return (
+                    <div
+                      key={workLog.id}
+                      className="calendar-worklog-card"
+                      style={{ top: `${top}px`, height: `${height}px` }}
                     >
-                      編集
-                    </button>
+                      <strong>{getWorkLogTitle(workLog, events, tasks)}</strong>
+                      <div>{getTimeLabel(workLog.started_at, workLog.ended_at)} / 実績 {formatMinutes(workLog.duration_minutes)}</div>
+                      {plannedMinutes != null && differenceMinutes != null && (
+                        <div>
+                          予定 {formatMinutes(plannedMinutes)} / {differenceMinutes === 0
+                            ? "予定通り"
+                            : differenceMinutes > 0
+                              ? `${formatMinutes(differenceMinutes)}超過`
+                              : `${formatMinutes(Math.abs(differenceMinutes))}短縮`}
+                        </div>
+                      )}
+                      {workLog.memo && <small>{workLog.memo}</small>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
 
-                    <button type="button" onClick={() => handleDelete(event.id)}>
-                      削除
-                    </button>
+        <aside className="calendar-side-stack">
+          <section className="calendar-panel">
+            <div className="calendar-panel__header">
+              <div>
+                <p className="calendar-panel__label">Quick add</p>
+                <h2>{editingEvent ? "予定編集" : "予定追加"}</h2>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="calendar-form">
+              <label>
+                タスクから予定化
+                <select value={selectedTaskId} onChange={(e) => handleSelectTask(e.target.value)}>
+                  <option value="">タスクを選択しない</option>
+                  {tasks.map((task) => (
+                    <option key={task.id} value={task.id}>{task.title}（{task.estimated_minutes}分）</option>
+                  ))}
+                </select>
+              </label>
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：React実装" />
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="メモ" />
+              <div className="calendar-form__grid">
+                <label>
+                  開始
+                  <input
+                    type="datetime-local"
+                    value={startTime}
+                    onChange={(e) => {
+                      const nextStartTime = e.target.value;
+                      setStartTime(nextStartTime);
+                      const task = tasks.find((item) => item.id === Number(selectedTaskId));
+                      if (task) {
+                        const start = new Date(nextStartTime);
+                        const end = new Date(start.getTime() + task.estimated_minutes * 60000);
+                        setEndTime(toDateTimeLocalValue(end));
+                      }
+                    }}
+                  />
+                </label>
+                <label>
+                  終了
+                  <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                </label>
+              </div>
+              <div className="calendar-form__actions">
+                <button className="calendar-button calendar-button--primary" type="submit">
+                  {editingEvent ? "予定を更新" : "予定を追加"}
+                </button>
+                {editingEvent && <button className="calendar-button calendar-button--ghost" type="button" onClick={resetForm}>キャンセル</button>}
+              </div>
+            </form>
+          </section>
+
+          <section className="calendar-panel">
+            <div className="calendar-panel__header">
+              <div>
+                <p className="calendar-panel__label">Frequent</p>
+                <h2>よく使うタスク</h2>
+              </div>
+            </div>
+            <p className="calendar-panel__hint">開始時刻を決めて押すと、すぐ予定に入ります。</p>
+            <div className="calendar-list">
+              {frequentTasks.length === 0 ? (
+                <p className="calendar-empty">まだよく使うタスクはありません。</p>
+              ) : (
+                frequentTasks.map((task) => (
+                  <div className="calendar-list-item" key={`${task.task_id ?? "event"}-${task.title}`}>
+                    <div>
+                      <strong>{task.title}</strong>
+                      <span>{task.estimated_minutes}分 / {task.usage_count}回使用</span>
+                    </div>
+                    <button type="button" onClick={() => handleAddFrequentTask(task)}>追加</button>
                   </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="calendar-panel">
+            <div className="calendar-panel__header">
+              <div>
+                <p className="calendar-panel__label">Actual</p>
+                <h2>実績を手入力</h2>
+              </div>
+            </div>
+            <form onSubmit={handleCreateActualLog} className="calendar-form">
+              <label>
+                予定に紐づける
+                <select value={actualCalendarEventId} onChange={(e) => handleSelectActualEvent(e.target.value)}>
+                  <option value="">予定に紐づけない</option>
+                  {dayEvents.map((event) => (
+                    <option key={event.id} value={event.id}>{event.title}（{event.start_time.slice(11, 16)} - {event.end_time.slice(11, 16)}）</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                タスク
+                <select value={actualTaskId} onChange={(e) => setActualTaskId(e.target.value)}>
+                  <option value="">タスクを選択しない</option>
+                  {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+                </select>
+              </label>
+              <div className="calendar-form__grid">
+                <label>開始<input type="datetime-local" value={actualStartedAt} onChange={(e) => setActualStartedAt(e.target.value)} /></label>
+                <label>終了<input type="datetime-local" value={actualEndedAt} onChange={(e) => setActualEndedAt(e.target.value)} /></label>
+              </div>
+              <textarea value={actualMemo} onChange={(e) => setActualMemo(e.target.value)} placeholder="実績メモ" />
+              <div className="calendar-form__actions">
+                <button className="calendar-button calendar-button--primary" type="submit">実績を追加</button>
+                <button className="calendar-button calendar-button--ghost" type="button" onClick={resetActualForm}>リセット</button>
+              </div>
+            </form>
+          </section>
+        </aside>
+      </div>
+
+      <div className="calendar-bottom-grid">
+        <section id="recurrence" className="calendar-panel">
+          <div className="calendar-panel__header">
+            <div>
+              <p className="calendar-panel__label">Repeat</p>
+              <h2>繰り返し予定</h2>
+            </div>
+            <button className="calendar-button calendar-button--ghost" type="button" onClick={handleGenerateRecurringEvents}>
+              30日分生成
+            </button>
+          </div>
+          <form onSubmit={handleCreateRecurrenceRule} className="calendar-form calendar-form--compact">
+            <select value={recurrenceTaskId} onChange={(e) => handleSelectRecurrenceTask(e.target.value)}>
+              <option value="">タスクを選択しない</option>
+              {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}（{task.estimated_minutes}分）</option>)}
+            </select>
+            <input value={recurrenceTitle} onChange={(e) => setRecurrenceTitle(e.target.value)} placeholder="例：毎朝の計画確認" />
+            <textarea value={recurrenceDescription} onChange={(e) => setRecurrenceDescription(e.target.value)} placeholder="メモ" />
+            <div className="calendar-form__grid calendar-form__grid--three">
+              <select value={recurrenceFrequency} onChange={(e) => setRecurrenceFrequency(e.target.value as RecurrenceFrequency)}>
+                <option value="daily">毎日</option>
+                <option value="weekday">平日</option>
+                <option value="weekly">毎週・曜日指定</option>
+              </select>
+              {recurrenceFrequency === "weekly" ? (
+                <select value={recurrenceWeekday} onChange={(e) => setRecurrenceWeekday(e.target.value)}>
+                  {WEEKDAYS.map((weekday, index) => <option key={weekday} value={index}>{weekday}曜日</option>)}
+                </select>
+              ) : <span className="calendar-form__placeholder">曜日指定なし</span>}
+              <input type="time" value={recurrenceStartTime} onChange={(e) => setRecurrenceStartTime(e.target.value)} />
+              <input type="number" min="1" value={recurrenceDurationMinutes} onChange={(e) => setRecurrenceDurationMinutes(e.target.value)} placeholder="分" />
+            </div>
+            <button className="calendar-button calendar-button--primary" type="submit">ルールを追加</button>
+          </form>
+          {generateMessage && <p className="calendar-message calendar-message--small">{generateMessage}</p>}
+          <div className="calendar-list">
+            {recurrenceRules.length === 0 ? (
+              <p className="calendar-empty">繰り返しルールはまだありません。</p>
+            ) : (
+              recurrenceRules.map((rule) => (
+                <div className="calendar-list-item" key={rule.id}>
+                  <div>
+                    <strong>{rule.title}</strong>
+                    <span>{formatFrequency(rule)} / {rule.start_time.slice(0, 5)} / {rule.duration_minutes}分</span>
+                  </div>
+                  <button type="button" onClick={() => handleDeleteRecurrenceRule(rule.id)}>削除</button>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ borderRight: "1px solid #eee" }}>
-          <div
-            style={{
-              height: "40px",
-              borderBottom: "1px solid #eee",
-              boxSizing: "border-box",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 700,
-              background: "#fafafa",
-            }}
-          >
-            実績
-          </div>
-
-          <div
-            style={{
-              position: "relative",
-              height: `${TIMELINE_HEIGHT}px`,
-              background:
-                "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
-            }}
-          >
-            {currentTimeLineTop != null && (
-              <div
-                aria-label="現在時刻"
-                style={{
-                  position: "absolute",
-                  top: `${currentTimeLineTop}px`,
-                  left: 0,
-                  right: 0,
-                  zIndex: 5,
-                  borderTop: "2px solid #ef4444",
-                  pointerEvents: "none",
-                }}
-              />
+              ))
             )}
-
-            {dayWorkLogs.map((workLog) => {
-              const top = getTimelineTop(workLog.started_at);
-              const height = getTimelineHeight(workLog.started_at, workLog.ended_at);
-              const plannedMinutes = workLog.planned_minutes;
-              const differenceMinutes = workLog.difference_minutes;
-
-              return (
-                <div
-                  key={workLog.id}
-                  style={{
-                    position: "absolute",
-                    top: `${top}px`,
-                    left: "12px",
-                    right: "12px",
-                    height: `${height}px`,
-                    background: "#e8f7e8",
-                    borderLeft: "4px solid #66c27a",
-                    borderRadius: "12px",
-                    padding: "10px",
-                    boxSizing: "border-box",
-                    overflow: "hidden",
-                    color: "#2f6b3d",
-                  }}
-                >
-                  <strong>{getWorkLogTitle(workLog, events, tasks)}</strong>
-                  <div style={{ fontSize: "13px", marginTop: "4px" }}>
-                    {getTimeLabel(workLog.started_at, workLog.ended_at)}
-                    （実績 {formatMinutes(workLog.duration_minutes)}）
-                  </div>
-
-                  {plannedMinutes != null && differenceMinutes != null && (
-                    <div style={{ fontSize: "13px", marginTop: "4px" }}>
-                      予定 {formatMinutes(plannedMinutes)} /{" "}
-                      {differenceMinutes === 0
-                        ? "予定通り"
-                        : differenceMinutes > 0
-                          ? `${formatMinutes(differenceMinutes)}超過`
-                          : `${formatMinutes(Math.abs(differenceMinutes))}短縮`}
-                    </div>
-                  )}
-
-                  {workLog.memo && (
-                    <div style={{ fontSize: "12px", marginTop: "4px" }}>
-                      {workLog.memo}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </div>
-        </div>
+        </section>
+
+        <section id="reuse-yesterday" className="calendar-panel">
+          <div className="calendar-panel__header">
+            <div>
+              <p className="calendar-panel__label">Reuse</p>
+              <h2>昨日やったタスク</h2>
+            </div>
+          </div>
+          <div className="calendar-list">
+            {yesterdayTasks.length === 0 ? (
+              <p className="calendar-empty">昨日の予定はまだありません。</p>
+            ) : (
+              yesterdayTasks.map((task) => (
+                <div className="calendar-list-item" key={task.source_event_id}>
+                  <div>
+                    <strong>{task.title}</strong>
+                    <span>{task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分</span>
+                  </div>
+                  <button type="button" onClick={() => handleCopyReusableTask(task)}>コピー</button>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="calendar-panel">
+          <div className="calendar-panel__header">
+            <div>
+              <p className="calendar-panel__label">Recent</p>
+              <h2>最近やったタスク</h2>
+            </div>
+          </div>
+          <div className="calendar-list">
+            {recentTasks.length === 0 ? (
+              <p className="calendar-empty">最近の予定はまだありません。</p>
+            ) : (
+              recentTasks.map((task) => (
+                <div className="calendar-list-item" key={task.source_event_id}>
+                  <div>
+                    <strong>{task.title}</strong>
+                    <span>{task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分</span>
+                  </div>
+                  <button type="button" onClick={() => handleCopyReusableTask(task)}>コピー</button>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

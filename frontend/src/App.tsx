@@ -7,86 +7,43 @@ import ProjectsPage from "./pages/ProjectsPage";
 import ReflectionsPage from "./pages/ReflectionsPage";
 import TasksPage from "./pages/TasksPage";
 import TimerPage from "./pages/TimerPage";
+import SettingsPage from "./pages/SettingsPage";
+import WeekCalendarPage from "./pages/WeekCalendarPage";
 import WorkLogsPage from "./pages/WorkLogsPage";
 import "./App.css";
 
 type MenuItem = {
   path: string;
   label: string;
-  description: string;
   icon: string;
+  badge?: string;
 };
 
 const menuItems: MenuItem[] = [
-  {
-    path: "/dashboard",
-    label: "ダッシュボード",
-    description: "今日の状況と秘書提案",
-    icon: "🏠",
-  },
-  {
-    path: "/goals",
-    label: "目標",
-    description: "長期目標の管理",
-    icon: "🎯",
-  },
-  {
-    path: "/projects",
-    label: "プロジェクト",
-    description: "進捗と工数の確認",
-    icon: "📁",
-  },
-  {
-    path: "/tasks",
-    label: "タスク",
-    description: "TODOと優先度管理",
-    icon: "✅",
-  },
-  {
-    path: "/calendar",
-    label: "カレンダー",
-    description: "予定と実績タイムライン",
-    icon: "📅",
-  },
-  {
-    path: "/timer",
-    label: "タイマー",
-    description: "作業開始・中断・再開",
-    icon: "⏱️",
-  },
-  {
-    path: "/work-logs",
-    label: "実績",
-    description: "作業ログの集計",
-    icon: "📊",
-  },
-  {
-    path: "/reflections",
-    label: "振り返り",
-    description: "日次・完了時レビュー",
-    icon: "📝",
-  },
-  {
-    path: "/gap-tasks",
-    label: "スキマタスク",
-    description: "短時間でできる作業",
-    icon: "🧩",
-  },
+  { path: "/dashboard", label: "ダッシュボード", icon: "⌂" },
+  { path: "/calendar", label: "カレンダー", icon: "□" },
+  { path: "/projects", label: "プロジェクト", icon: "▧" },
+  { path: "/tasks", label: "タスク", icon: "☷" },
+  { path: "/timer", label: "タイマー", icon: "◷" },
+  { path: "/work-logs", label: "工数・進捗", icon: "▥" },
+  { path: "/reflections", label: "振り返り", icon: "✓" },
+  { path: "/gap-tasks", label: "スキマタスク", icon: "♢" },
+  { path: "/goals", label: "目標", icon: "◎" },
+  { path: "/settings", label: "設定", icon: "⚙" },
 ];
 
 function AppShell() {
   const location = useLocation();
-  const currentMenuItem =
-    menuItems.find((item) => location.pathname.startsWith(item.path)) ?? menuItems[0];
+  const isDashboard = location.pathname === "/" || location.pathname.startsWith("/dashboard");
 
   return (
     <div className="app-shell">
       <aside className="app-sidebar" aria-label="メインメニュー">
         <div className="app-brand">
-          <span className="app-brand__mark">AI</span>
+          <span className="app-brand__mark" aria-hidden="true">✓</span>
           <div>
-            <p className="app-brand__name">Life Manager</p>
-            <p className="app-brand__subtitle">行動管理AI秘書</p>
+            <p className="app-brand__name">AI秘書</p>
+            <p className="app-brand__subtitle">行動管理</p>
           </div>
         </div>
 
@@ -99,28 +56,35 @@ function AppShell() {
                 isActive ? "app-menu__link app-menu__link--active" : "app-menu__link"
               }
             >
-              <span className="app-menu__icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              <span>
-                <span className="app-menu__label">{item.label}</span>
-                <span className="app-menu__description">{item.description}</span>
-              </span>
+              <span className="app-menu__icon" aria-hidden="true">{item.icon}</span>
+              <span className="app-menu__label">{item.label}</span>
+              {item.badge && <span className="app-menu__badge">{item.badge}</span>}
             </NavLink>
           ))}
         </nav>
+
+        <div className="app-sidebar-card">
+          <p>集中モード</p>
+          <strong>元気 🙂</strong>
+          <span>エネルギーレベル</span>
+          <div className="app-energy-bars" aria-hidden="true"><i /><i /><i /><i /></div>
+          <NavLink to="/settings">変更する</NavLink>
+        </div>
       </aside>
 
       <div className="app-main-area">
-        <header className="app-header">
-          <div>
-            <p className="app-header__eyebrow">Freelance AI Secretary</p>
-            <h1 className="app-header__title">{currentMenuItem.label}</h1>
-            <p className="app-header__description">{currentMenuItem.description}</p>
-          </div>
-        </header>
+        {!isDashboard && (
+          <header className="app-header">
+            <div>
+              <p className="app-header__eyebrow">AI Secretary</p>
+              <h1 className="app-header__title">
+                {menuItems.find((item) => location.pathname.startsWith(item.path))?.label ?? "AI秘書"}
+              </h1>
+            </div>
+          </header>
+        )}
 
-        <main className="app-content">
+        <main className={isDashboard ? "app-content app-content--dashboard" : "app-content"}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardPage />} />
@@ -128,10 +92,12 @@ function AppShell() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/calendar/week" element={<WeekCalendarPage />} />
             <Route path="/timer" element={<TimerPage />} />
             <Route path="/work-logs" element={<WorkLogsPage />} />
             <Route path="/reflections" element={<ReflectionsPage />} />
             <Route path="/gap-tasks" element={<GapTasksPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>

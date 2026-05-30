@@ -413,7 +413,7 @@ export default function GapTasksPage() {
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="例：メール返信を3件だけ進める"
+            placeholder="例：連絡対応を10分だけ進める"
             style={{ width: "420px", padding: "8px" }}
           />
         </div>
