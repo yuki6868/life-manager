@@ -50,6 +50,17 @@ const TASK_ENERGY_OPTIONS = [
   { value: "low", label: "低集中" },
 ];
 
+const KANBAN_COLUMNS = [
+  { value: "todo", title: "TODO", label: "未着手", note: "これから着手するタスク" },
+  { value: "in_progress", title: "DOING", label: "進行中", note: "いま進めているタスク" },
+  { value: "completed", title: "DONE", label: "完了", note: "完了したタスク" },
+];
+
+const EXTRA_STATUS_COLUMNS = [
+  { value: "paused", title: "PAUSED", label: "保留", note: "一時停止中のタスク" },
+  { value: "cancelled", title: "CANCELLED", label: "中止", note: "中止したタスク" },
+];
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -61,6 +72,7 @@ export default function TasksPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
+  const [draggingTaskId, setDraggingTaskId] = useState<number | null>(null);
 
   async function loadData() {
     const [taskData, projectData] = await Promise.all([
@@ -119,6 +131,12 @@ export default function TasksPage() {
   const selectedTask = useMemo(() => {
     return tasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0] ?? null;
   }, [filteredTasks, selectedTaskId, tasks]);
+
+  const boardColumns = useMemo(() => {
+    const columns = [...KANBAN_COLUMNS, ...EXTRA_STATUS_COLUMNS];
+    if (statusFilter === "all") return columns;
+    return columns.filter((column) => column.value === statusFilter);
+  }, [statusFilter]);
 
   const activeCount = tasks.filter((task) => task.status !== "completed" && task.status !== "cancelled").length;
   const completedCount = tasks.filter((task) => task.status === "completed").length;
@@ -193,6 +211,16 @@ export default function TasksPage() {
     const updated = await updateTaskStatus(task.id, status);
     setSelectedTaskId(updated.id);
     await loadData();
+  }
+
+  async function handleDropToStatus(status: string) {
+    if (!draggingTaskId) return;
+
+    const draggedTask = tasks.find((task) => task.id === draggingTaskId);
+    setDraggingTaskId(null);
+
+    if (!draggedTask || draggedTask.status === status) return;
+    await handleStatusChange(draggedTask, status);
   }
 
   async function handleDelete(task: Task) {
@@ -272,38 +300,62 @@ export default function TasksPage() {
                 ))}
               </div>
 
-              <div className="tasks-table">
-                <div className="tasks-table__head">
-                  <span>タスク</span>
-                  <span>プロジェクト</span>
-                  <span>予定工数</span>
-                  <span>優先度</span>
-                  <span>ステータス</span>
-                </div>
-                {filteredTasks.length === 0 ? (
-                  <div className="tasks-empty-row">条件に一致するタスクがありません。</div>
-                ) : (
-                  filteredTasks.map((task) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      className={`tasks-row ${selectedTask?.id === task.id ? "is-selected" : ""}`}
-                      onClick={() => setSelectedTaskId(task.id)}
+              <div className="tasks-kanban-board" aria-label="タスク看板">
+                {boardColumns.map((column) => {
+                  const columnTasks = filteredTasks.filter((task) => task.status === column.value);
+
+                  return (
+                    <section
+                      key={column.value}
+                      className={`tasks-kanban-column tasks-kanban-column--${column.value}`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => handleDropToStatus(column.value)}
                     >
-                      <span className="tasks-row__title">
-                        <span className={`tasks-check tasks-check--${task.status}`}>{task.status === "completed" ? "✓" : ""}</span>
-                        <span>
-                          <strong>{task.title}</strong>
-                          <small>{task.description || "説明なし"}</small>
-                        </span>
-                      </span>
-                      <span><TaskProjectPill title={getProjectTitle(task.project_id)} /></span>
-                      <span>{formatMinutes(task.estimated_minutes)}</span>
-                      <span><PriorityBadge priority={task.priority} /></span>
-                      <span><StatusBadge status={task.status} /></span>
-                    </button>
-                  ))
-                )}
+                      <div className="tasks-kanban-column__header">
+                        <div>
+                          <p>{column.label}</p>
+                          <h2>{column.title}</h2>
+                          <small>{column.note}</small>
+                        </div>
+                        <span>{columnTasks.length}</span>
+                      </div>
+
+                      <div className="tasks-kanban-column__body">
+                        {columnTasks.length === 0 ? (
+                          <div className="tasks-kanban-empty">この列のタスクはありません。</div>
+                        ) : (
+                          columnTasks.map((task) => (
+                            <button
+                              key={task.id}
+                              type="button"
+                              draggable
+                              className={`tasks-kanban-card ${selectedTask?.id === task.id ? "is-selected" : ""} ${draggingTaskId === task.id ? "is-dragging" : ""}`}
+                              onClick={() => setSelectedTaskId(task.id)}
+                              onDragStart={(event) => {
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", String(task.id));
+                                setDraggingTaskId(task.id);
+                                setSelectedTaskId(task.id);
+                              }}
+                              onDragEnd={() => setDraggingTaskId(null)}
+                            >
+                              <span className="tasks-kanban-card__topline">
+                                <PriorityBadge priority={task.priority} />
+                                <span>{formatMinutes(task.estimated_minutes)}</span>
+                              </span>
+                              <strong>{task.title}</strong>
+                              <small>{task.description || "説明なし"}</small>
+                              <span className="tasks-kanban-card__footer">
+                                <TaskProjectPill title={getProjectTitle(task.project_id)} />
+                                <span>{getEnergyLabel(task.energy_level)}</span>
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
               </div>
             </section>
 
