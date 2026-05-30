@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { MouseEvent } from "react";
 import {
   createCalendarEvent,
   deleteCalendarEvent,
@@ -31,6 +32,23 @@ import type {
 const START_HOUR = 5;
 const END_HOUR = 24;
 const HOUR_HEIGHT = 96;
+const TIMELINE_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
+const SNAP_MINUTES = 15;
+const DEFAULT_TIMELINE_EVENT_MINUTES = 30;
+
+const EVENT_STATUS_STYLES: Record<string, { background: string; border: string; color: string; label: string }> = {
+  planned: { background: "#eef2ff", border: "#6366f1", color: "#3730a3", label: "予定" },
+  in_progress: { background: "#fff7ed", border: "#f97316", color: "#9a3412", label: "進行中" },
+  done: { background: "#ecfdf5", border: "#10b981", color: "#047857", label: "完了" },
+  skipped: { background: "#f8fafc", border: "#94a3b8", color: "#475569", label: "スキップ" },
+  cancelled: { background: "#fef2f2", border: "#ef4444", color: "#b91c1c", label: "取消" },
+};
+
+const ENERGY_STYLES: Record<string, { label: string; background: string; color: string }> = {
+  low: { label: "低", background: "#ecfeff", color: "#0e7490" },
+  medium: { label: "中", background: "#fefce8", color: "#a16207" },
+  high: { label: "高", background: "#fff1f2", color: "#be123c" },
+};
 
 const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
 
@@ -107,6 +125,89 @@ function getTimeLabel(start: string, end: string) {
   return `${start.slice(11, 16)} - ${end.slice(11, 16)}`;
 }
 
+function getTimelineTop(dateText: string) {
+  const minutes = getMinutesFromStart(dateText);
+  return Math.max(0, Math.min(TIMELINE_HEIGHT, (minutes / 60) * HOUR_HEIGHT));
+}
+
+function getTimelineHeight(start: string, end: string) {
+  return Math.max(28, (getDurationMinutes(start, end) / 60) * HOUR_HEIGHT);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function snapMinutes(minutes: number) {
+  return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
+}
+
+function getDayMinute(dateText: string) {
+  const date = new Date(dateText);
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function toSelectedDateTimeValue(selectedDate: string, dayMinute: number) {
+  const date = new Date(`${selectedDate}T00:00`);
+  date.setMinutes(dayMinute);
+  return toDateTimeLocalValue(date);
+}
+
+function getPointerDayMinute(
+  event: MouseEvent<HTMLDivElement>,
+  timelineElement: HTMLDivElement
+) {
+  const rect = timelineElement.getBoundingClientRect();
+  const offsetY = clamp(event.clientY - rect.top, 0, TIMELINE_HEIGHT);
+  const minutesFromTimelineStart = (offsetY / HOUR_HEIGHT) * 60;
+  return snapMinutes(START_HOUR * 60 + minutesFromTimelineStart);
+}
+
+function normalizeSelection(startMinute: number, endMinute: number) {
+  const minMinute = START_HOUR * 60;
+  const maxMinute = END_HOUR * 60;
+  const start = clamp(Math.min(startMinute, endMinute), minMinute, maxMinute);
+  let end = clamp(Math.max(startMinute, endMinute), minMinute, maxMinute);
+
+  if (end - start < SNAP_MINUTES) {
+    end = clamp(start + DEFAULT_TIMELINE_EVENT_MINUTES, minMinute, maxMinute);
+  }
+
+  return { start, end };
+}
+
+function getEventStatusStyle(status: string) {
+  return EVENT_STATUS_STYLES[status] ?? EVENT_STATUS_STYLES.planned;
+}
+
+function getTaskEnergyStyle(task: Task | undefined) {
+  if (!task) {
+    return { label: "未設定", background: "#f1f5f9", color: "#475569" };
+  }
+
+  return (
+    ENERGY_STYLES[task.energy_level] ?? {
+      label: task.energy_level || "未設定",
+      background: "#f1f5f9",
+      color: "#475569",
+    }
+  );
+}
+
+function getCurrentTimeLineTop(selectedDate: string) {
+  const now = new Date();
+  if (toDateInputValue(now) !== selectedDate) {
+    return null;
+  }
+
+  const currentHour = now.getHours();
+  if (currentHour < START_HOUR || currentHour >= END_HOUR) {
+    return null;
+  }
+
+  return getTimelineTop(now.toISOString());
+}
+
 function getWorkLogTitle(
   workLog: WorkLog,
   events: CalendarEvent[],
@@ -126,6 +227,19 @@ function getWorkLogTitle(
 }
 
 
+type TimelineSelection = {
+  startMinute: number;
+  endMinute: number;
+};
+
+type DraggingCalendarEvent = {
+  eventId: number;
+  pointerOffsetMinutes: number;
+  durationMinutes: number;
+  previewStartMinute: number;
+  previewEndMinute: number;
+};
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
@@ -133,7 +247,13 @@ export default function CalendarPage() {
   const [yesterdayTasks, setYesterdayTasks] = useState<ReusableCalendarTask[]>([]);
   const [recentTasks, setRecentTasks] = useState<ReusableCalendarTask[]>([]);
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()));
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [timelineSelection, setTimelineSelection] =
+    useState<TimelineSelection | null>(null);
+  const [draggingEvent, setDraggingEvent] =
+    useState<DraggingCalendarEvent | null>(null);
+  const [timelineMessage, setTimelineMessage] = useState("");
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -207,6 +327,11 @@ export default function CalendarPage() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    const timerId = window.setInterval(() => setNowTick(Date.now()), 60000);
+    return () => window.clearInterval(timerId);
+  }, []);
+
   const dayEvents = useMemo(() => {
     return events
       .filter((event) => isSameDate(event.start_time, selectedDate))
@@ -237,6 +362,18 @@ export default function CalendarPage() {
       return acc;
     }, {});
   }, [workLogs]);
+
+  const tasksById = useMemo(() => {
+    return tasks.reduce<Record<number, Task>>((acc, task) => {
+      acc[task.id] = task;
+      return acc;
+    }, {});
+  }, [tasks]);
+
+  const currentTimeLineTop = useMemo(() => {
+    void nowTick;
+    return getCurrentTimeLineTop(selectedDate);
+  }, [nowTick, selectedDate]);
 
   function resetForm() {
     setTitle("");
@@ -416,6 +553,144 @@ export default function CalendarPage() {
 
     resetActualForm();
     await loadData();
+  }
+
+  async function createTimelineEvent(startMinute: number, endMinute: number) {
+    const task = selectedTaskId
+      ? tasks.find((item) => item.id === Number(selectedTaskId))
+      : undefined;
+    const start = toSelectedDateTimeValue(selectedDate, startMinute);
+    const end = toSelectedDateTimeValue(selectedDate, endMinute);
+    const eventTitle = title.trim() || task?.title || "新規予定";
+    const eventDescription = description || task?.description || "";
+
+    setStartTime(start);
+    setEndTime(end);
+
+    await createCalendarEvent({
+      task_id: task?.id ?? null,
+      title: eventTitle,
+      description: eventDescription,
+      start_time: start,
+      end_time: end,
+    });
+
+    setTimelineMessage(
+      `${start.slice(11, 16)} - ${end.slice(11, 16)} に「${eventTitle}」を追加しました。`
+    );
+    await loadData();
+  }
+
+  function handlePlanTimelineMouseDown(e: MouseEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).closest("[data-calendar-event-card='true']")) {
+      return;
+    }
+
+    const startMinute = getPointerDayMinute(e, e.currentTarget);
+    setTimelineMessage("");
+    setTimelineSelection({ startMinute, endMinute: startMinute });
+  }
+
+  function handlePlanTimelineMouseMove(e: MouseEvent<HTMLDivElement>) {
+    if (draggingEvent) {
+      const minute = getPointerDayMinute(e, e.currentTarget);
+      const minMinute = START_HOUR * 60;
+      const maxMinute = END_HOUR * 60;
+      const nextStartMinute = clamp(
+        minute - draggingEvent.pointerOffsetMinutes,
+        minMinute,
+        maxMinute - draggingEvent.durationMinutes
+      );
+
+      setDraggingEvent({
+        ...draggingEvent,
+        previewStartMinute: nextStartMinute,
+        previewEndMinute: nextStartMinute + draggingEvent.durationMinutes,
+      });
+      return;
+    }
+
+    if (!timelineSelection) return;
+
+    setTimelineSelection({
+      ...timelineSelection,
+      endMinute: getPointerDayMinute(e, e.currentTarget),
+    });
+  }
+
+  async function handlePlanTimelineMouseUp() {
+    if (draggingEvent) {
+      const targetEvent = events.find((event) => event.id === draggingEvent.eventId);
+      if (!targetEvent) {
+        setDraggingEvent(null);
+        return;
+      }
+
+      const start = toSelectedDateTimeValue(
+        selectedDate,
+        draggingEvent.previewStartMinute
+      );
+      const end = toSelectedDateTimeValue(
+        selectedDate,
+        draggingEvent.previewEndMinute
+      );
+
+      setDraggingEvent(null);
+
+      await updateCalendarEvent(targetEvent.id, {
+        task_id: targetEvent.task_id ?? null,
+        title: targetEvent.title,
+        description: targetEvent.description ?? "",
+        start_time: start,
+        end_time: end,
+        status: targetEvent.status,
+      });
+
+      setTimelineMessage(
+        `「${targetEvent.title}」を ${start.slice(11, 16)} - ${end.slice(11, 16)} に移動しました。`
+      );
+      await loadData();
+      return;
+    }
+
+    if (!timelineSelection) return;
+
+    const selection = normalizeSelection(
+      timelineSelection.startMinute,
+      timelineSelection.endMinute
+    );
+    setTimelineSelection(null);
+    await createTimelineEvent(selection.start, selection.end);
+  }
+
+  function handlePlanTimelineMouseLeave() {
+    if (!timelineSelection) return;
+    setTimelineSelection(null);
+  }
+
+  function handleEventDragStart(
+    e: MouseEvent<HTMLDivElement>,
+    event: CalendarEvent
+  ) {
+    const timelineElement = e.currentTarget.parentElement;
+    if (!(timelineElement instanceof HTMLDivElement)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const pointerMinute = getPointerDayMinute(e, timelineElement);
+    const eventStartMinute = getDayMinute(event.start_time);
+    const eventEndMinute = getDayMinute(event.end_time);
+    const durationMinutes = getDurationMinutes(event.start_time, event.end_time);
+
+    setTimelineMessage("");
+    setDraggingEvent({
+      eventId: event.id,
+      pointerOffsetMinutes: clamp(pointerMinute - eventStartMinute, 0, durationMinutes),
+      durationMinutes,
+      previewStartMinute: eventStartMinute,
+      previewEndMinute: eventEndMinute,
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -933,6 +1208,23 @@ export default function CalendarPage() {
       </section>
 
       <h2>{selectedDate} の予定・実績</h2>
+      <p style={{ color: "#64748b", marginTop: "-8px" }}>
+        予定タイムラインの空き時間をクリックまたはドラッグすると、その時間に予定を直接追加できます。予定ブロックはドラッグで時間移動できます。
+      </p>
+      {timelineMessage && (
+        <p
+          style={{
+            maxWidth: "1180px",
+            padding: "10px 12px",
+            borderRadius: "12px",
+            background: "#ecfeff",
+            color: "#0e7490",
+            fontWeight: 700,
+          }}
+        >
+          {timelineMessage}
+        </p>
+      )}
 
       <div
         style={{
@@ -992,48 +1284,185 @@ export default function CalendarPage() {
           </div>
 
           <div
+            onMouseDown={handlePlanTimelineMouseDown}
+            onMouseMove={handlePlanTimelineMouseMove}
+            onMouseUp={handlePlanTimelineMouseUp}
+            onMouseLeave={handlePlanTimelineMouseLeave}
             style={{
               position: "relative",
-              height: `${(END_HOUR - START_HOUR + 1) * HOUR_HEIGHT}px`,
+              height: `${TIMELINE_HEIGHT}px`,
               background:
                 "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
+              cursor: draggingEvent ? "grabbing" : timelineSelection ? "ns-resize" : "crosshair",
+              userSelect: "none",
             }}
           >
+            {currentTimeLineTop != null && (
+              <div
+                aria-label="現在時刻"
+                style={{
+                  position: "absolute",
+                  top: `${currentTimeLineTop}px`,
+                  left: 0,
+                  right: 0,
+                  zIndex: 5,
+                  borderTop: "2px solid #ef4444",
+                  pointerEvents: "none",
+                }}
+              >
+                <span
+                  style={{
+                    position: "absolute",
+                    left: "8px",
+                    top: "-11px",
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    background: "#ef4444",
+                    color: "#fff",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    boxShadow: "0 4px 10px rgba(239, 68, 68, 0.25)",
+                  }}
+                >
+                  NOW
+                </span>
+              </div>
+            )}
+
+            {timelineSelection && (() => {
+              const selection = normalizeSelection(
+                timelineSelection.startMinute,
+                timelineSelection.endMinute
+              );
+              const top = ((selection.start - START_HOUR * 60) / 60) * HOUR_HEIGHT;
+              const height = Math.max(
+                28,
+                ((selection.end - selection.start) / 60) * HOUR_HEIGHT
+              );
+
+              return (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: `${top}px`,
+                    left: "10px",
+                    right: "10px",
+                    height: `${height}px`,
+                    border: "2px dashed #2563eb",
+                    borderRadius: "14px",
+                    background: "rgba(37, 99, 235, 0.08)",
+                    color: "#1d4ed8",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    pointerEvents: "none",
+                    zIndex: 4,
+                  }}
+                >
+                  {toSelectedDateTimeValue(selectedDate, selection.start).slice(11, 16)} - {toSelectedDateTimeValue(selectedDate, selection.end).slice(11, 16)} に追加
+                </div>
+              );
+            })()}
+
             {dayEvents.map((event) => {
-              const top =
-                (getMinutesFromStart(event.start_time) / 60) * HOUR_HEIGHT;
-              const height =
-                (getDurationMinutes(event.start_time, event.end_time) / 60) *
-                HOUR_HEIGHT;
+              const previewStartTime =
+                draggingEvent?.eventId === event.id
+                  ? toSelectedDateTimeValue(
+                      selectedDate,
+                      draggingEvent.previewStartMinute
+                    )
+                  : event.start_time;
+              const previewEndTime =
+                draggingEvent?.eventId === event.id
+                  ? toSelectedDateTimeValue(
+                      selectedDate,
+                      draggingEvent.previewEndMinute
+                    )
+                  : event.end_time;
+              const isDragging = draggingEvent?.eventId === event.id;
+              const top = getTimelineTop(previewStartTime);
+              const height = getTimelineHeight(previewStartTime, previewEndTime);
               const plannedMinutes = getDurationMinutes(
-                event.start_time,
-                event.end_time
+                previewStartTime,
+                previewEndTime
               );
               const actualMinutes = actualMinutesByEventId[event.id] ?? 0;
               const hasActualMinutes = actualMinutes > 0;
+              const linkedTask = event.task_id ? tasksById[event.task_id] : undefined;
+              const energyStyle = getTaskEnergyStyle(linkedTask);
+              const statusStyle = getEventStatusStyle(event.status);
 
               return (
                 <div
                   key={event.id}
+                  data-calendar-event-card="true"
+                  onMouseDown={(e) => handleEventDragStart(e, event)}
                   style={{
                     position: "absolute",
                     top: `${top}px`,
                     left: "12px",
                     right: "12px",
                     height: `${height}px`,
-                    background: "#d9f3ff",
-                    borderLeft: "4px solid #7cc7f2",
-                    borderRadius: "12px",
+                    background: statusStyle.background,
+                    border: `1px solid ${statusStyle.border}33`,
+                    borderLeft: `5px solid ${statusStyle.border}`,
+                    borderRadius: "14px",
                     padding: "10px",
                     boxSizing: "border-box",
                     overflow: "hidden",
-                    color: "#32627a",
+                    color: statusStyle.color,
+                    boxShadow: isDragging
+                      ? "0 18px 34px rgba(15, 23, 42, 0.18)"
+                      : "0 10px 22px rgba(15, 23, 42, 0.08)",
+                    cursor: isDragging ? "grabbing" : "grab",
+                    zIndex: isDragging ? 6 : 2,
+                    transform: isDragging ? "scale(1.01)" : "none",
                   }}
                 >
-                  <strong>{event.title}</strong>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                    }}
+                  >
+                    <strong>{event.title}</strong>
+                    <span
+                      style={{
+                        padding: "2px 8px",
+                        borderRadius: "999px",
+                        background: "rgba(255, 255, 255, 0.72)",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {statusStyle.label}
+                    </span>
+                  </div>
                   <div style={{ fontSize: "13px", marginTop: "4px" }}>
-                    {getTimeLabel(event.start_time, event.end_time)}
+                    {getTimeLabel(previewStartTime, previewEndTime)}
                     （予定 {formatMinutes(plannedMinutes)}）
+                  </div>
+
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      marginTop: "6px",
+                      padding: "3px 8px",
+                      borderRadius: "999px",
+                      background: energyStyle.background,
+                      color: energyStyle.color,
+                      fontSize: "12px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    エネルギー {energyStyle.label}
                   </div>
 
                   <div
@@ -1052,7 +1481,11 @@ export default function CalendarPage() {
                     )}
                   </div>
 
-                  <div style={{ marginTop: "8px" }}>
+                  <div
+                    data-calendar-event-actions="true"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{ marginTop: "8px" }}
+                  >
                     <button
                       type="button"
                       onClick={() => handleEdit(event)}
@@ -1090,17 +1523,29 @@ export default function CalendarPage() {
           <div
             style={{
               position: "relative",
-              height: `${(END_HOUR - START_HOUR + 1) * HOUR_HEIGHT}px`,
+              height: `${TIMELINE_HEIGHT}px`,
               background:
                 "repeating-linear-gradient(to bottom, transparent 0, transparent 95px, #eee 96px)",
             }}
           >
+            {currentTimeLineTop != null && (
+              <div
+                aria-label="現在時刻"
+                style={{
+                  position: "absolute",
+                  top: `${currentTimeLineTop}px`,
+                  left: 0,
+                  right: 0,
+                  zIndex: 5,
+                  borderTop: "2px solid #ef4444",
+                  pointerEvents: "none",
+                }}
+              />
+            )}
+
             {dayWorkLogs.map((workLog) => {
-              const top =
-                (getMinutesFromStart(workLog.started_at) / 60) * HOUR_HEIGHT;
-              const height =
-                (getDurationMinutes(workLog.started_at, workLog.ended_at) / 60) *
-                HOUR_HEIGHT;
+              const top = getTimelineTop(workLog.started_at);
+              const height = getTimelineHeight(workLog.started_at, workLog.ended_at);
               const plannedMinutes = workLog.planned_minutes;
               const differenceMinutes = workLog.difference_minutes;
 
