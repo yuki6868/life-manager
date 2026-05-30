@@ -10,6 +10,7 @@ from app.models.recurrence_rule import RecurrenceRule
 from app.models.task import Task
 from app.schemas.recurrence_rule import (
     RecurrenceGenerateResponse,
+    RecurrenceGeneratedEventsDeleteResponse,
     RecurrenceRuleCreate,
     RecurrenceRuleResponse,
     RecurrenceRuleUpdate,
@@ -70,6 +71,30 @@ async def get_recurrence_rules(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
+
+
+
+def get_event_duration_minutes(event: CalendarEvent) -> int:
+    return int((event.end_time - event.start_time).total_seconds() // 60)
+
+
+def matches_generated_event(rule: RecurrenceRule, event: CalendarEvent) -> bool:
+    if event.title != rule.title:
+        return False
+
+    if event.task_id != rule.task_id:
+        return False
+
+    if (event.description or None) != (rule.description or None):
+        return False
+
+    if event.start_time.time().replace(second=0, microsecond=0) != rule.start_time.replace(second=0, microsecond=0):
+        return False
+
+    if get_event_duration_minutes(event) != rule.duration_minutes:
+        return False
+
+    return should_generate_on_date(rule, event.start_time.date())
 
 
 def should_generate_on_date(rule: RecurrenceRule, target_date: date) -> bool:
@@ -219,6 +244,61 @@ async def update_recurrence_rule(
     await db.refresh(rule)
 
     return rule
+
+
+@router.delete(
+    "/{rule_id}/generated-events",
+    response_model=RecurrenceGeneratedEventsDeleteResponse,
+)
+async def delete_generated_events_for_recurrence_rule(
+    rule_id: int,
+    scope: str = Query(default="future", pattern="^(future|all)$"),
+    delete_rule: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+):
+    """繰り返しルールから生成された予定をまとめて削除する。
+
+    既存DBには calendar_events と recurrence_rules の紐づけカラムがないため、
+    ルールのタイトル・タスク・説明・開始時刻・所要時間・生成対象日で一致判定する。
+    デフォルトでは今日以降だけを削除し、過去の実績確認を壊しにくくする。
+    """
+    result = await db.execute(
+        select(RecurrenceRule).where(RecurrenceRule.id == rule_id)
+    )
+    rule = result.scalar_one_or_none()
+
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Recurrence rule not found")
+
+    query = select(CalendarEvent).where(CalendarEvent.title == rule.title)
+    if rule.task_id is None:
+        query = query.where(CalendarEvent.task_id.is_(None))
+    else:
+        query = query.where(CalendarEvent.task_id == rule.task_id)
+
+    if scope == "future":
+        query = query.where(CalendarEvent.start_time >= datetime.combine(date.today(), datetime.min.time()))
+
+    event_result = await db.execute(query)
+    candidate_events = event_result.scalars().all()
+
+    matched_events = [
+        event for event in candidate_events if matches_generated_event(rule, event)
+    ]
+
+    for event in matched_events:
+        await db.delete(event)
+
+    if delete_rule:
+        await db.delete(rule)
+
+    await db.commit()
+
+    return RecurrenceGeneratedEventsDeleteResponse(
+        deleted_event_count=len(matched_events),
+        deleted_rule=delete_rule,
+        scope=scope,
+    )
 
 
 @router.delete("/{rule_id}")

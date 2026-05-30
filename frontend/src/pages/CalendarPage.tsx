@@ -20,6 +20,7 @@ import { fetchTasks } from "../api/tasks";
 import type { Task } from "../api/tasks";
 import {
   createRecurrenceRule,
+  deleteGeneratedEventsForRecurrenceRule,
   deleteRecurrenceRule,
   fetchRecurrenceRules,
 } from "../api/recurrenceRules";
@@ -61,7 +62,11 @@ function formatFrequency(rule: RecurrenceRule) {
 }
 
 function toDateInputValue(date: Date) {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function toDateTimeLocalValue(date: Date) {
@@ -414,10 +419,28 @@ export default function CalendarPage() {
     ? Math.round((actualTodayMinutes / plannedTodayMinutes) * 100)
     : 0;
 
+  function syncFormDate(dateText: string) {
+    if (editingEvent) {
+      return;
+    }
+
+    setStartTime(applyDateToTime(dateText, startTime));
+    setEndTime(applyDateToTime(dateText, endTime));
+    setActualStartedAt(applyDateToTime(dateText, actualStartedAt));
+    setActualEndedAt(applyDateToTime(dateText, actualEndedAt));
+  }
+
+  function handleSelectedDateChange(dateText: string) {
+    setSelectedDate(dateText);
+    syncFormDate(dateText);
+    setSelectedEventDetail(null);
+    setTimelineMessage("");
+  }
+
   function moveSelectedDate(days: number) {
     const date = new Date(`${selectedDate}T00:00`);
     date.setDate(date.getDate() + days);
-    setSelectedDate(toDateInputValue(date));
+    handleSelectedDateChange(toDateInputValue(date));
   }
 
   function resetForm() {
@@ -561,6 +584,21 @@ export default function CalendarPage() {
   async function handleDeleteRecurrenceRule(id: number) {
     await deleteRecurrenceRule(id);
     setGenerateMessage("");
+    await loadData();
+  }
+
+  async function handleDeleteGeneratedEventsForRule(id: number, deleteRule = false) {
+    const result = await deleteGeneratedEventsForRecurrenceRule(id, {
+      scope: "future",
+      deleteRule,
+    });
+
+    setGenerateMessage(
+      deleteRule
+        ? `繰り返しルールと、今日以降の生成済み予定${result.deleted_event_count}件を削除しました。`
+        : `今日以降の生成済み予定${result.deleted_event_count}件を削除しました。`,
+    );
+
     await loadData();
   }
 
@@ -889,12 +927,12 @@ export default function CalendarPage() {
             className="calendar-date-input"
             type="date"
             value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
+            onChange={(e) => handleSelectedDateChange(e.target.value)}
           />
           <button type="button" className="calendar-icon-button" onClick={() => moveSelectedDate(1)}>
             ›
           </button>
-          <button type="button" className="calendar-button calendar-button--ghost" onClick={() => setSelectedDate(toDateInputValue(new Date()))}>
+          <button type="button" className="calendar-button calendar-button--ghost" onClick={() => handleSelectedDateChange(toDateInputValue(new Date()))}>
             今日
           </button>
         </div>
@@ -1252,7 +1290,11 @@ export default function CalendarPage() {
                     <strong>{rule.title}</strong>
                     <span>{formatFrequency(rule)} / {rule.start_time.slice(0, 5)} / {rule.duration_minutes}分</span>
                   </div>
-                  <button type="button" onClick={() => handleDeleteRecurrenceRule(rule.id)}>削除</button>
+                  <div className="calendar-list-item__actions">
+                    <button type="button" onClick={() => handleDeleteGeneratedEventsForRule(rule.id)}>生成済み予定を削除</button>
+                    <button type="button" onClick={() => handleDeleteGeneratedEventsForRule(rule.id, true)}>ルールごと停止</button>
+                    <button type="button" onClick={() => handleDeleteRecurrenceRule(rule.id)}>ルールのみ削除</button>
+                  </div>
                 </div>
               ))
             )}
@@ -1276,7 +1318,7 @@ export default function CalendarPage() {
                     <strong>{task.title}</strong>
                     <span>{task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分</span>
                   </div>
-                  <button type="button" onClick={() => handleCopyReusableTask(task)}>コピー</button>
+                  <button type="button" onClick={() => handleCopyReusableTask(task)}>この日に追加</button>
                 </div>
               ))
             )}
@@ -1300,7 +1342,7 @@ export default function CalendarPage() {
                     <strong>{task.title}</strong>
                     <span>{task.start_time.slice(11, 16)} - {task.end_time.slice(11, 16)} / {task.estimated_minutes}分</span>
                   </div>
-                  <button type="button" onClick={() => handleCopyReusableTask(task)}>コピー</button>
+                  <button type="button" onClick={() => handleCopyReusableTask(task)}>この日に追加</button>
                 </div>
               ))
             )}

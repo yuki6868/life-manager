@@ -424,9 +424,14 @@ export default function DashboardPage() {
           throw new Error("event_id が見つかりません。 ");
         }
 
-        await moveIncompleteEventToTomorrow(eventId);
+        const movedSuggestion = await moveIncompleteEventToTomorrow(eventId);
+        const movedStartTime = getStringMetadata(movedSuggestion, "start_time");
+        if (movedStartTime) {
+          setSelectedDate(movedStartTime.slice(0, 10));
+        }
+
         await handleDismissSuggestion(suggestion.id);
-        setAssistantMessage("未完了予定を明日に移しました。");
+        setAssistantMessage("未完了予定を明日に移しました。明日の予定に切り替えました。");
         await loadData();
         return;
       }

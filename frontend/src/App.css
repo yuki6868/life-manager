@@ -1174,6 +1174,13 @@
   font-size: 12px;
 }
 
+.calendar-list-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 @media (max-width: 1180px) {
   .calendar-layout,
   .calendar-bottom-grid {

@@ -31,6 +31,12 @@ class RecurrenceGenerateResponse(BaseModel):
     target_days: int
 
 
+class RecurrenceGeneratedEventsDeleteResponse(BaseModel):
+    deleted_event_count: int
+    deleted_rule: bool
+    scope: str
+
+
 class RecurrenceRuleResponse(BaseModel):
     id: int
     task_id: int | None
