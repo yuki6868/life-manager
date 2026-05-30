@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -23,6 +23,9 @@ class AssistantSuggestionType(StrEnum):
     UNSTARTED_EVENT = "unstarted_event"
     DELAYED_EVENT = "delayed_event"
     GAP_TIME_TASK = "gap_time_task"
+    TODAY_ACHIEVEMENT = "today_achievement"
+    MOVE_INCOMPLETE_EVENT_TOMORROW = "move_incomplete_event_tomorrow"
+    DAILY_REFLECTION = "daily_reflection"
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,16 @@ class GapTaskCandidate:
     priority: str
     energy_level: str
     status: str
+
+
+@dataclass(frozen=True)
+class TodayProgressSnapshot:
+    """夜の提案で使う今日の達成状況。"""
+
+    planned_minutes: int
+    actual_minutes: int
+    achievement_rate: float
+    incomplete_events_count: int
 
 
 MORNING_START = time(hour=5, minute=0)
@@ -234,6 +247,8 @@ def build_daytime_suggestions(
                     "event_id": event.id,
                     "start_time": event.start_at.isoformat(),
                     "end_time": event.end_at.isoformat(),
+                    "tomorrow_start_time": (event.start_at + timedelta(days=1)).isoformat(),
+                    "tomorrow_end_time": (event.end_at + timedelta(days=1)).isoformat(),
                     "status": event.status,
                 },
             )
@@ -256,6 +271,8 @@ def build_daytime_suggestions(
                     "event_id": event.id,
                     "start_time": event.start_at.isoformat(),
                     "end_time": event.end_at.isoformat(),
+                    "tomorrow_start_time": (event.start_at + timedelta(days=1)).isoformat(),
+                    "tomorrow_end_time": (event.end_at + timedelta(days=1)).isoformat(),
                     "status": event.status,
                 },
             )
@@ -286,6 +303,95 @@ def build_daytime_suggestions(
                     "next_event_id": next_event.id if next_event else None,
                     "next_event_start_time": next_event.start_at.isoformat() if next_event else None,
                 },
+            )
+        )
+
+    return suggestions
+
+
+def build_night_suggestions(
+    *,
+    progress: TodayProgressSnapshot,
+    incomplete_events: list[CalendarEventCandidate],
+    has_reflection: bool,
+) -> list[AssistantSuggestion]:
+    """夜に出す提案を生成する。"""
+    suggestions: list[AssistantSuggestion] = []
+
+    if progress.planned_minutes > 0:
+        progress_message = (
+            f"今日は予定{progress.planned_minutes}分に対して、"
+            f"実績{progress.actual_minutes}分でした。"
+            f"達成率は{progress.achievement_rate}%です。"
+        )
+    else:
+        progress_message = (
+            f"今日は予定時間がありませんでした。実績は{progress.actual_minutes}分です。"
+            "明日は最初に予定を置くと、振り返りやすくなります。"
+        )
+
+    achievement_priority = (
+        "high"
+        if progress.achievement_rate < 60 and progress.planned_minutes > 0
+        else "medium"
+    )
+    suggestions.append(
+        AssistantSuggestion(
+            id="night-today-achievement",
+            suggestion_type=AssistantSuggestionType.TODAY_ACHIEVEMENT,
+            title="今日の達成率を確認しましょう",
+            message=progress_message,
+            priority=achievement_priority,
+            action_label="実績を確認する",
+            action_target="dashboard",
+            metadata={
+                "planned_minutes": progress.planned_minutes,
+                "actual_minutes": progress.actual_minutes,
+                "achievement_rate": progress.achievement_rate,
+                "incomplete_events_count": progress.incomplete_events_count,
+            },
+        )
+    )
+
+    for event in incomplete_events:
+        suggestions.append(
+            AssistantSuggestion(
+                id=f"night-move-incomplete-event-{event.id}",
+                suggestion_type=AssistantSuggestionType.MOVE_INCOMPLETE_EVENT_TOMORROW,
+                title=f"未完了予定を明日に移しましょう: {event.title}",
+                message=(
+                    "今日の未完了予定です。放置すると明日の判断コストになるので、"
+                    "明日の予定へ移すか、やらない予定として整理しましょう。"
+                ),
+                priority="high",
+                action_label="明日に移す",
+                action_target="calendar",
+                metadata={
+                    "event_id": event.id,
+                    "title": event.title,
+                    "start_time": event.start_at.isoformat(),
+                    "end_time": event.end_at.isoformat(),
+                    "tomorrow_start_time": (event.start_at + timedelta(days=1)).isoformat(),
+                    "tomorrow_end_time": (event.end_at + timedelta(days=1)).isoformat(),
+                    "status": event.status,
+                },
+            )
+        )
+
+    if not has_reflection:
+        suggestions.append(
+            AssistantSuggestion(
+                id="night-daily-reflection",
+                suggestion_type=AssistantSuggestionType.DAILY_REFLECTION,
+                title="今日の振り返りを残しましょう",
+                message=(
+                    "今日の良かったこと・悪かったこと・改善点を1行だけでも残すと、"
+                    "明日の計画精度が上がります。"
+                ),
+                priority="medium",
+                action_label="振り返りを書く",
+                action_target="reflections",
+                metadata={"has_reflection": False},
             )
         )
 
