@@ -253,7 +253,7 @@ export default function GapTasksPage() {
   const isTimerActive = timerStatus === "running" || timerStatus === "paused";
 
   return (
-    <div style={{ padding: "32px" }}>
+    <div className="landscape-page landscape-gap-page" style={{ padding: "32px" }}>
       <h1>スキマタスク管理</h1>
       <p>
         5分〜30分程度の空き時間に進められる小さなタスクを登録します。

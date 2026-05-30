@@ -109,7 +109,7 @@ export default function TasksPage() {
   }
 
   return (
-    <div style={{ padding: "32px" }}>
+    <div className="landscape-page landscape-form-list-page" style={{ padding: "32px" }}>
       <h1>タスク管理</h1>
 
       {projects.length === 0 ? (

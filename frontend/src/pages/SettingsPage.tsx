@@ -37,7 +37,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <section className="settings-page">
+    <section className="settings-page landscape-page landscape-settings-page">
       <div className="dashboard-panel">
         <div className="dashboard-panel__header">
           <h2>集中モード設定</h2>

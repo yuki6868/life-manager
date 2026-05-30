@@ -197,6 +197,7 @@ export default function WorkLogsPage() {
 
   return (
     <section
+      className="landscape-page landscape-worklogs-page"
       style={{
         padding: "32px",
         borderTop: "1px solid #ddd",

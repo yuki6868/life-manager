@@ -119,7 +119,7 @@ export default function ReflectionsPage() {
   }
 
   return (
-    <section style={{ padding: "32px", borderTop: "1px solid #ddd" }}>
+    <section className="landscape-page landscape-form-list-page" style={{ padding: "32px", borderTop: "1px solid #ddd" }}>
       <h1>日次振り返り</h1>
       <p style={{ color: "#666" }}>
         1日の良かったこと、悪かったこと、改善点、遅延理由を記録します。

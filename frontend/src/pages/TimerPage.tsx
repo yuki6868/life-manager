@@ -366,6 +366,7 @@ export default function TimerPage() {
 
   return (
     <section
+      className="landscape-page landscape-timer-page"
       style={{
         padding: "32px",
         borderTop: "1px solid #ddd",

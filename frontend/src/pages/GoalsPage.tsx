@@ -69,7 +69,7 @@ export default function GoalsPage() {
   }
 
   return (
-    <div style={{ padding: "32px" }}>
+    <div className="landscape-page landscape-form-list-page" style={{ padding: "32px" }}>
       <h1>目標管理</h1>
 
       <form onSubmit={handleSubmit} style={{ marginBottom: "32px" }}>

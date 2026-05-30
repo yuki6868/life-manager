@@ -76,7 +76,7 @@ export default function WeekCalendarPage() {
   }
 
   return (
-    <section className="week-calendar-page">
+    <section className="week-calendar-page landscape-page landscape-week-page">
       <div className="calendar-toolbar">
         <div>
           <p className="calendar-toolbar__eyebrow">Weekly timeline</p>
