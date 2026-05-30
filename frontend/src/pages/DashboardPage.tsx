@@ -228,6 +228,42 @@ function isInProgressTask(task: Task) {
   return ["in_progress", "doing", "active"].includes(task.status);
 }
 
+function isActiveTask(task: Task) {
+  return !["completed", "cancelled", "archived"].includes(task.status);
+}
+
+function taskPriorityScore(task: Task) {
+  const priorityScore: Record<string, number> = {
+    high: 3,
+    medium: 2,
+    low: 1,
+  };
+
+  return (priorityScore[task.priority] ?? 0) * 1000
+    + (task.urgency ?? 0) * 100
+    + (task.importance ?? 0) * 10
+    + Math.max(0, task.actual_minutes);
+}
+
+function getTaskProjectName(task: Task, projects: Project[]) {
+  return projects.find((project) => project.id === task.project_id)?.title ?? "プロジェクト未設定";
+}
+
+function getProjectRemainingLabel(project: Project, estimatedMinutes: number) {
+  const remainingMinutes = getRemainingMinutes(project, estimatedMinutes);
+  if (estimatedMinutes <= 0) return "見積なし";
+  if (remainingMinutes === 0) return "完了圏内";
+  return `残り${formatMinutes(remainingMinutes)}`;
+}
+
+function getProjectMomentum(project: Project, estimatedMinutes: number) {
+  const progressRate = getProjectProgressRate(project, estimatedMinutes);
+  if (progressRate >= 80) return "完了が近い";
+  if (progressRate >= 40) return "進行中";
+  if (project.actual_minutes > 0) return "着手済み";
+  return "未着手";
+}
+
 function getProjectProgressRate(project: Project, estimatedMinutes: number) {
   if (estimatedMinutes <= 0) return 0;
   return Math.min(
@@ -719,11 +755,30 @@ export default function DashboardPage() {
 
   const achievementRate = clampPercent(summary?.achievement_rate ?? 0);
   const urgentCollapseRate = clampPercent(urgentTaskAnalysis?.plan_collapse_rate ?? 0);
-  const topSuggestions = visibleAssistantSuggestions.slice(0, 2);
-  const gapTaskCandidates = tasks
-    .filter((task) => !["completed", "cancelled", "archived"].includes(task.status))
-    .sort((a, b) => a.estimated_minutes - b.estimated_minutes)
-    .slice(0, 3);
+  const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
+  const todoTasks = useMemo(
+    () => activeTasks.filter((task) => ["pending", "todo"].includes(task.status)),
+    [activeTasks],
+  );
+  const completedTasks = useMemo(
+    () => tasks.filter((task) => task.status === "completed"),
+    [tasks],
+  );
+  const priorityTasks = useMemo(() => {
+    return [...activeTasks]
+      .sort((a, b) => taskPriorityScore(b) - taskPriorityScore(a))
+      .slice(0, 6);
+  }, [activeTasks]);
+  const nextActionTask = priorityTasks[0] ?? null;
+  const topSuggestions = visibleAssistantSuggestions.slice(0, 4);
+  const gapTaskCandidates = activeTasks
+    .filter((task) => Math.max(0, task.estimated_minutes) <= 30)
+    .sort((a, b) => {
+      const minutesDiff = (a.estimated_minutes || 0) - (b.estimated_minutes || 0);
+      if (minutesDiff !== 0) return minutesDiff;
+      return taskPriorityScore(b) - taskPriorityScore(a);
+    })
+    .slice(0, 4);
 
   const selectedPlannedMinutes = todayEvents.reduce(
     (total, event) => total + getEventMinutes(event),
@@ -745,6 +800,9 @@ export default function DashboardPage() {
     .filter((item) => item.minutes > 0)
     .slice(0, 4);
   const distributionTotalMinutes = distributionProjects.reduce((total, item) => total + item.minutes, 0);
+  const nextActionMinutes = nextActionTask
+    ? Math.max(10, nextActionTask.estimated_minutes || 30)
+    : 0;
 
   return (
     <section className="dashboard-page dashboard-page--secretary">
@@ -847,19 +905,47 @@ export default function DashboardPage() {
       {!isLoading && !errorMessage && (
         <>
           <div className="secretary-board">
-            <DashboardTimeline events={todayEvents} onAddEvent={() => openEventModal()} onAddUrgentTask={() => navigate("/timer#urgent-interrupt")} onSelectEvent={openExistingEventModal} />
+            <DashboardTimeline
+              dateKey={selectedDate}
+              events={todayEvents}
+              onAddEvent={() => openEventModal()}
+              onAddUrgentTask={() => navigate("/timer#urgent-interrupt")}
+              onSelectEvent={openExistingEventModal}
+            />
 
             <div className="secretary-center-column">
               <section className="secretary-card secretary-summary-card">
                 <div className="secretary-card__title"><span>◷</span><h2>今日のサマリー</h2></div>
-                <div className="secretary-kpis">
-                  <div><span>計画時間</span><strong>{formatMinutes(displayPlannedMinutes)}</strong></div>
-                  <div><span>実績時間</span><strong>{formatMinutes(displayActualMinutes)}</strong></div>
+                <div className="secretary-kpis secretary-kpis--compact">
+                  <div><span>計画</span><strong>{formatMinutes(displayPlannedMinutes)}</strong></div>
+                  <div><span>実績</span><strong>{formatMinutes(displayActualMinutes)}</strong></div>
                   <div><span>達成率</span><strong>{displayAchievementRate}%</strong><small>{incompleteEvents.length}件残り</small></div>
+                </div>
+                <div className="secretary-dashboard-stats">
+                  <div><span>TODO</span><strong>{todoTasks.length}</strong></div>
+                  <div><span>DOING</span><strong>{inProgressTasks.length}</strong></div>
+                  <div><span>DONE</span><strong>{completedTasks.length}</strong></div>
                 </div>
                 <div className="secretary-goal-row"><span>{isTodaySelected ? "今日" : "選択日"}の計画合計：{formatMinutes(displayPlannedMinutes)}</span><strong>{displayAchievementRate}%</strong></div>
                 <ProgressBar value={displayAchievementRate} label={`達成率 ${displayAchievementRate}%`} />
                 <button type="button" className="secretary-wide-button" onClick={() => navigate("/reflections")}>振り返りを記録する</button>
+              </section>
+
+              <section className="secretary-card secretary-next-action-card">
+                <div className="secretary-card__title"><span>▶</span><h2>次にやること</h2></div>
+                {nextActionTask ? (
+                  <div className="secretary-next-action">
+                    <div>
+                      <strong>{nextActionTask.title}</strong>
+                      <p>{getTaskProjectName(nextActionTask, projects)} / {priorityLabel(nextActionTask.priority)}</p>
+                    </div>
+                    <button type="button" onClick={() => handleAddTaskToCalendar(nextActionTask)} disabled={assistantActionId === `task-${nextActionTask.id}`}>
+                      {formatMinutes(nextActionMinutes)}で予定化
+                    </button>
+                  </div>
+                ) : (
+                  <p className="dashboard-empty-message">未完了タスクはありません。新しいタスクを追加するとここに表示されます。</p>
+                )}
               </section>
 
               <section className="secretary-card">
@@ -872,15 +958,13 @@ export default function DashboardPage() {
                       taskEstimatedMinutesByProjectId[project.id] ?? 0,
                     );
                     const progressRate = getProjectProgressRate(project, estimatedMinutes);
-                    const remainingMinutes = getRemainingMinutes(project, estimatedMinutes);
-
                     return (
                       <div key={project.id} className="secretary-project-row">
                         <strong>{project.title}</strong>
                         <span>{progressRate}%</span>
                         <ProgressBar value={progressRate} label={`${project.title} ${progressRate}%`} />
-                        <small>{formatMinutes(project.actual_minutes)} / {formatMinutes(estimatedMinutes)}</small>
-                        <small>{formatMinutes(remainingMinutes)}</small>
+                        <small>{getProjectMomentum(project, estimatedMinutes)}</small>
+                        <small>{getProjectRemainingLabel(project, estimatedMinutes)}</small>
                       </div>
                     );
                   })}
@@ -915,7 +999,9 @@ export default function DashboardPage() {
                 <div className="secretary-card__title"><span>□</span><h2>スキマ時間の提案</h2></div>
                 <p className="secretary-muted">{gapMinutes == null ? "次の予定までの空き時間は現在ありません" : <>次の予定まで <strong>{formatMinutes(gapMinutes)}</strong> の空き時間があります</>}</p>
                 <div className="secretary-gap-list">
-                  {gapTaskCandidates.map((task) => (
+                  {gapTaskCandidates.length === 0 ? (
+                    <p className="dashboard-empty-message">30分以内でできる未完了タスクはありません。</p>
+                  ) : gapTaskCandidates.map((task) => (
                     <div key={task.id} className="secretary-gap-row">
                       <span>✓</span><strong>{task.title}</strong><small>{formatMinutes(Math.max(10, task.estimated_minutes || 10))}</small><em>{task.energy_level || "低集中"}</em><button type="button" onClick={() => handleAddTaskToCalendar(task)} disabled={assistantActionId === `task-${task.id}`}>追加</button>
                     </div>
@@ -941,6 +1027,21 @@ export default function DashboardPage() {
               </div>
             </section>
 
+            <section className="secretary-card secretary-priority-card">
+              <div className="secretary-card__title"><span>✓</span><h2>優先タスク</h2></div>
+              <div className="secretary-priority-list">
+                {priorityTasks.length === 0 ? (
+                  <p className="dashboard-empty-message">未完了タスクはありません。</p>
+                ) : priorityTasks.map((task) => (
+                  <button key={task.id} type="button" onClick={() => handleAddTaskToCalendar(task)} disabled={assistantActionId === `task-${task.id}`}>
+                    <span>{priorityLabel(task.priority)}</span>
+                    <strong>{task.title}</strong>
+                    <small>{formatMinutes(Math.max(10, task.estimated_minutes || 30))}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+
             <section className="secretary-card secretary-estimation-card">
               <div className="secretary-card__title"><span>♙</span><h2>工数見積りの精度</h2></div>
               <strong className="secretary-big-number">{estimationAccuracy?.underestimation_rate ?? 0}%</strong>
@@ -950,17 +1051,9 @@ export default function DashboardPage() {
           </div>
 
           <div className="secretary-bottom-strip">
-            <section className="secretary-card secretary-quick-card">
-              <strong>よく使うタスク</strong>
-              {tasks.slice(0, 5).map((task) => (
-                <button key={task.id} type="button" onClick={() => handleAddTaskToCalendar(task)} disabled={assistantActionId === `task-${task.id}`}>
-                  {task.title} {formatMinutes(task.estimated_minutes || 30)}
-                </button>
-              ))}
-              <button type="button" onClick={() => navigate("/tasks")}>＋ カスタム</button>
-            </section>
-            <section className="secretary-card"><strong>繰り返し予定</strong><p className="secretary-muted">朝のルーティン・勉強時間などをカレンダーで管理できます</p><button type="button" className="secretary-wide-button" onClick={handleGenerateRecurringEventsFromDashboard}>管理する</button></section>
-            <section className="secretary-card"><strong>昨日の予定をコピー</strong><button type="button" className="secretary-wide-button" onClick={handleCopyYesterdayEventsToSelectedDate} disabled={assistantActionId === "copy-yesterday"}>コピーする</button></section>
+            <section className="secretary-card secretary-utility-card"><strong>タスクを追加・整理</strong><p className="secretary-muted">TODO / DOING / DONE の看板で今日やることを整理します。</p><button type="button" className="secretary-wide-button" onClick={() => navigate("/tasks")}>タスク画面を開く</button></section>
+            <section className="secretary-card secretary-utility-card"><strong>繰り返し予定</strong><p className="secretary-muted">朝のルーティン・勉強時間などをカレンダーで管理できます</p><button type="button" className="secretary-wide-button" onClick={handleGenerateRecurringEventsFromDashboard}>管理する</button></section>
+            <section className="secretary-card secretary-utility-card"><strong>昨日の予定をコピー</strong><p className="secretary-muted">昨日の予定を選択日にまとめて複製します。</p><button type="button" className="secretary-wide-button" onClick={handleCopyYesterdayEventsToSelectedDate} disabled={assistantActionId === "copy-yesterday"}>コピーする</button></section>
           </div>
         </>
       )}
@@ -968,19 +1061,47 @@ export default function DashboardPage() {
   );
 }
 
-function DashboardTimeline({ events, onAddEvent, onAddUrgentTask, onSelectEvent }: { events: CalendarEvent[]; onAddEvent: () => void; onAddUrgentTask: () => void; onSelectEvent: (event: CalendarEvent) => void }) {
+function DashboardTimeline({
+  dateKey,
+  events,
+  onAddEvent,
+  onAddUrgentTask,
+  onSelectEvent,
+}: {
+  dateKey: string;
+  events: CalendarEvent[];
+  onAddEvent: () => void;
+  onAddUrgentTask: () => void;
+  onSelectEvent: (event: CalendarEvent) => void;
+}) {
   const startHour = 7;
   const endHour = 23;
   const hourHeight = 64;
   const now = new Date();
-  const nowTop = ((now.getHours() - startHour) * 60 + now.getMinutes()) / 60 * hourHeight;
+  const isToday = dateKey === toDateKey(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const timelineStartMinutes = startHour * 60;
+  const timelineEndMinutes = endHour * 60;
+  const shouldShowNowLine =
+    isToday &&
+    nowMinutes >= timelineStartMinutes &&
+    nowMinutes <= timelineEndMinutes;
+  const nowTop = ((nowMinutes - timelineStartMinutes) / 60) * hourHeight;
+  const headingDate = new Date(`${dateKey}T00:00:00`).toLocaleDateString(
+    "ja-JP",
+    {
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+    },
+  );
 
   return (
     <section className="secretary-timeline-card">
       <div className="secretary-timeline-card__header">
         <div>
           <span>MAIN CALENDAR</span>
-          <h2>今日の予定</h2>
+          <h2>{isToday ? "今日の予定" : `${headingDate}の予定`}</h2>
         </div>
         <div className="secretary-timeline-card__actions">
           <button type="button" className="secretary-add-slot" onClick={onAddEvent}>＋ 予定を追加</button>
@@ -991,7 +1112,11 @@ function DashboardTimeline({ events, onAddEvent, onAddUrgentTask, onSelectEvent 
         {Array.from({ length: endHour - startHour + 1 }, (_, index) => startHour + index).map((hour) => (
           <div key={hour} className="secretary-time-row"><span>{hour}:00</span></div>
         ))}
-        <div className="secretary-now-line" style={{ top: `${Math.max(0, nowTop)}px` }}><span>{now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</span></div>
+        {shouldShowNowLine && (
+          <div className="secretary-now-line" style={{ top: `${nowTop}px` }}>
+            <span>{now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+        )}
         {events.map((event, index) => {
           const start = new Date(event.start_time);
           const end = new Date(event.end_time);

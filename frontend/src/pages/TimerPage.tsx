@@ -86,6 +86,44 @@ function formatDateTime(date: Date | null) {
   });
 }
 
+function formatEventDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return date.toLocaleString("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatEventDateRange(event: CalendarEvent) {
+  const start = new Date(event.start_time);
+  const end = new Date(event.end_time);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "-";
+  }
+
+  const dateLabel = start.toLocaleDateString("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  });
+  const startTime = start.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const endTime = end.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return `${dateLabel} ${startTime}-${endTime}`;
+}
+
 function toApiDateTime(date: Date) {
   const offsetMs = date.getTimezoneOffset() * 60 * 1000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 19);
@@ -520,13 +558,6 @@ export default function TimerPage() {
     .filter((event) => new Date(event.end_time).getTime() >= Date.now())
     .slice(0, 5);
 
-  function formatShortTime(value: string) {
-    return new Date(value).toLocaleTimeString("ja-JP", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
   function formatMinuteLabel(minutes: number | null) {
     if (minutes === null) return "-";
     return `${minutes}分`;
@@ -583,7 +614,7 @@ export default function TimerPage() {
                   <option value="">予定に紐づけない</option>
                   {selectableCalendarEvents.map((event) => (
                     <option key={event.id} value={event.id}>
-                      {event.title} / {event.start_time.slice(0, 16).replace("T", " ")} / {event.status}
+                      {event.title} / {formatEventDateRange(event)} / {event.status}
                     </option>
                   ))}
                 </select>
@@ -661,8 +692,11 @@ export default function TimerPage() {
               ) : (
                 upcomingEvents.map((event, index) => (
                   <button type="button" key={event.id} className={index === 0 ? "timer-schedule-item timer-schedule-item--next" : "timer-schedule-item"} onClick={() => handleSelectCalendarEvent(String(event.id))} disabled={isTimerActive}>
-                    <time>{formatShortTime(event.start_time)}</time>
-                    <span><strong>{event.title}</strong><small>予定</small></span>
+                    <time>{formatEventDateTime(event.start_time)}</time>
+                    <span>
+                      <strong>{event.title}</strong>
+                      <small>{formatEventDateRange(event)} / 予定</small>
+                    </span>
                     <em>{formatMinuteLabel(getPlannedMinutes(event))}</em>
                   </button>
                 ))
