@@ -20,6 +20,9 @@ class AssistantSuggestionType(StrEnum):
     NO_TODAY_EVENTS = "no_today_events"
     HIGH_PRIORITY_TASK = "high_priority_task"
     GMAIL_CHECK = "gmail_check"
+    UNSTARTED_EVENT = "unstarted_event"
+    DELAYED_EVENT = "delayed_event"
+    GAP_TIME_TASK = "gap_time_task"
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,29 @@ class HighPriorityTaskCandidate:
     status: str
     urgency: int | None = None
     importance: int | None = None
+
+
+@dataclass(frozen=True)
+class CalendarEventCandidate:
+    """昼の提案対象にする予定。"""
+
+    id: int
+    title: str
+    start_at: datetime
+    end_at: datetime
+    status: str
+
+
+@dataclass(frozen=True)
+class GapTaskCandidate:
+    """スキマ時間の提案対象にするタスク。"""
+
+    id: int
+    title: str
+    required_minutes: int
+    priority: str
+    energy_level: str
+    status: str
 
 
 MORNING_START = time(hour=5, minute=0)
@@ -174,6 +200,92 @@ def build_morning_suggestions(
                 action_label="Gmailを確認する",
                 action_target="gmail",
                 metadata={"recommended_minutes": 10},
+            )
+        )
+
+    return suggestions
+
+
+def build_daytime_suggestions(
+    *,
+    unstarted_events: list[CalendarEventCandidate],
+    delayed_events: list[CalendarEventCandidate],
+    available_minutes: int,
+    gap_tasks: list[GapTaskCandidate],
+    next_event: CalendarEventCandidate | None = None,
+) -> list[AssistantSuggestion]:
+    """昼に出す提案を生成する。"""
+    suggestions: list[AssistantSuggestion] = []
+
+    for event in unstarted_events:
+        suggestions.append(
+            AssistantSuggestion(
+                id=f"daytime-unstarted-event-{event.id}",
+                suggestion_type=AssistantSuggestionType.UNSTARTED_EVENT,
+                title=f"未着手予定: {event.title}",
+                message=(
+                    "開始時刻を過ぎていますが、まだ完了になっていません。"
+                    "やるなら今すぐ着手し、やらないなら予定を動かしましょう。"
+                ),
+                priority="high",
+                action_label="予定を確認する",
+                action_target="calendar",
+                metadata={
+                    "event_id": event.id,
+                    "start_time": event.start_at.isoformat(),
+                    "end_time": event.end_at.isoformat(),
+                    "status": event.status,
+                },
+            )
+        )
+
+    for event in delayed_events:
+        suggestions.append(
+            AssistantSuggestion(
+                id=f"daytime-delayed-event-{event.id}",
+                suggestion_type=AssistantSuggestionType.DELAYED_EVENT,
+                title=f"遅延予定: {event.title}",
+                message=(
+                    "終了予定時刻を過ぎていますが、完了になっていません。"
+                    "今日やるか、後ろへずらすか、削るかを決めると計画崩れを抑えられます。"
+                ),
+                priority="high",
+                action_label="予定を見直す",
+                action_target="calendar",
+                metadata={
+                    "event_id": event.id,
+                    "start_time": event.start_at.isoformat(),
+                    "end_time": event.end_at.isoformat(),
+                    "status": event.status,
+                },
+            )
+        )
+
+    for gap_task in gap_tasks:
+        next_event_text = (
+            f"次の予定「{next_event.title}」まで" if next_event else "今日中の空き時間で"
+        )
+        suggestions.append(
+            AssistantSuggestion(
+                id=f"daytime-gap-task-{gap_task.id}",
+                suggestion_type=AssistantSuggestionType.GAP_TIME_TASK,
+                title=f"スキマ時間でできる: {gap_task.title}",
+                message=(
+                    f"{next_event_text}{available_minutes}分あります。"
+                    f"必要時間{gap_task.required_minutes}分なので、今の空き時間に入れられます。"
+                ),
+                priority=gap_task.priority,
+                action_label="スキマタスクを開始する",
+                action_target="gap_tasks",
+                metadata={
+                    "gap_task_id": gap_task.id,
+                    "required_minutes": gap_task.required_minutes,
+                    "available_minutes": available_minutes,
+                    "energy_level": gap_task.energy_level,
+                    "status": gap_task.status,
+                    "next_event_id": next_event.id if next_event else None,
+                    "next_event_start_time": next_event.start_at.isoformat() if next_event else None,
+                },
             )
         )
 
