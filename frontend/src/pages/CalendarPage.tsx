@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -275,6 +275,7 @@ export default function CalendarPage() {
   const [selectedEventDetail, setSelectedEventDetail] =
     useState<CalendarEvent | null>(null);
   const [timelineMessage, setTimelineMessage] = useState("");
+  const suppressEventClickRef = useRef(false);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -793,6 +794,7 @@ export default function CalendarPage() {
         draggingEvent.previewEndMinute
       );
 
+      suppressEventClickRef.current = true;
       setDraggingEvent(null);
 
       await updateCalendarEvent(targetEvent.id, {
@@ -1040,6 +1042,10 @@ export default function CalendarPage() {
                       onMouseDown={(e) => handleEventDragStart(e, event)}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (suppressEventClickRef.current) {
+                          suppressEventClickRef.current = false;
+                          return;
+                        }
                         if (!draggingEvent && !resizingEvent) setSelectedEventDetail(event);
                       }}
                       style={{

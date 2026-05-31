@@ -207,6 +207,40 @@ function clampPercent(value: number) {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
+function buildFocusBlocks(events: CalendarEvent[], dateKey: string) {
+  const workStart = new Date(`${dateKey}T09:00`);
+  const workEnd = new Date(`${dateKey}T18:00`);
+  const busyBlocks = events
+    .map((event) => ({
+      start: new Date(event.start_time),
+      end: new Date(event.end_time),
+    }))
+    .filter((block) => block.end.getTime() > workStart.getTime() && block.start.getTime() < workEnd.getTime())
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const blocks: Array<{ start: Date; end: Date; minutes: number; label: string }> = [];
+  let cursor = workStart;
+
+  busyBlocks.forEach((block) => {
+    if (block.start.getTime() > cursor.getTime()) {
+      const minutes = Math.round((block.start.getTime() - cursor.getTime()) / 60000);
+      if (minutes >= 30) {
+        blocks.push({ start: cursor, end: block.start, minutes, label: minutes >= 75 ? "深い集中に最適" : "スキマ作業に最適" });
+      }
+    }
+    if (block.end.getTime() > cursor.getTime()) cursor = block.end;
+  });
+
+  if (workEnd.getTime() > cursor.getTime()) {
+    const minutes = Math.round((workEnd.getTime() - cursor.getTime()) / 60000);
+    if (minutes >= 30) {
+      blocks.push({ start: cursor, end: workEnd, minutes, label: minutes >= 75 ? "深い集中に最適" : "スキマ作業に最適" });
+    }
+  }
+
+  return blocks.slice(0, 3);
+}
+
 function achievementMessage(rate: number) {
   if (rate >= 100) return "予定分をしっかり達成できています。";
   if (rate >= 70) return "かなり良いペースです。あと少し進められます。";
@@ -808,6 +842,9 @@ export default function DashboardPage() {
   const nextActionMinutes = nextActionTask
     ? Math.max(10, nextActionTask.estimated_minutes || 30)
     : 0;
+  const remainingPlannedMinutes = Math.max(0, displayPlannedMinutes - displayActualMinutes);
+  const recentlyCompletedTasks = completedTasks.slice(-3).reverse();
+  const focusBlocks = buildFocusBlocks(todayEvents, selectedDate);
 
   return (
     <section className="dashboard-page dashboard-page--secretary">
@@ -927,11 +964,11 @@ export default function DashboardPage() {
                   <div><span>達成率</span><strong>{displayAchievementRate}%</strong><small>{incompleteEvents.length}件残り</small></div>
                 </div>
                 <div className="secretary-dashboard-stats">
-                  <div><span>TODO</span><strong>{todoTasks.length}</strong></div>
-                  <div><span>DOING</span><strong>{inProgressTasks.length}</strong></div>
-                  <div><span>DONE</span><strong>{completedTasks.length}</strong></div>
+                  <div><span>予定</span><strong>{todayEvents.length}件</strong></div>
+                  <div><span>残り</span><strong>{formatMinutes(remainingPlannedMinutes)}</strong></div>
+                  <div><span>未完了</span><strong>{todoTasks.length}件</strong></div>
                 </div>
-                <div className="secretary-goal-row"><span>{isTodaySelected ? "今日" : "選択日"}の計画合計：{formatMinutes(displayPlannedMinutes)}</span><strong>{displayAchievementRate}%</strong></div>
+                <div className="secretary-goal-row"><span>{isTodaySelected ? "今日" : "選択日"}の進捗：{achievementMessage(displayAchievementRate)}</span><strong>{displayAchievementRate}%</strong></div>
                 <ProgressBar value={displayAchievementRate} label={`達成率 ${displayAchievementRate}%`} />
                 <button type="button" className="secretary-wide-button" onClick={() => navigate("/reflections")}>振り返りを記録する</button>
               </section>
@@ -1014,6 +1051,21 @@ export default function DashboardPage() {
                 </div>
                 <Link className="secretary-link" to="/gap-tasks">すべてのスキマタスクを見る</Link>
               </section>
+
+              <section className="secretary-card secretary-focus-card">
+                <div className="secretary-card__title"><span>⏱</span><h2>今日の集中時間ブロック</h2></div>
+                <div className="secretary-focus-list">
+                  {focusBlocks.length === 0 ? (
+                    <p className="dashboard-empty-message">30分以上の空きブロックはありません。</p>
+                  ) : focusBlocks.map((block) => (
+                    <div key={`${block.start.toISOString()}-${block.end.toISOString()}`} className="secretary-focus-row">
+                      <strong>{formatTime(block.start.toISOString())} - {formatTime(block.end.toISOString())}</strong>
+                      <span>{block.label}（{formatMinutes(block.minutes)}）</span>
+                      <button type="button" onClick={() => openEventModal({ date: selectedDate, startTime: toTimeInputValue(block.start), endTime: toTimeInputValue(block.end), eventType: "作業" })}>この時間に集中</button>
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
           </div>
 
@@ -1055,10 +1107,34 @@ export default function DashboardPage() {
             </section>
           </div>
 
-          <div className="secretary-bottom-strip">
-            <section className="secretary-card secretary-utility-card"><strong>タスクを追加・整理</strong><p className="secretary-muted">TODO / DOING / DONE の看板で今日やることを整理します。</p><button type="button" className="secretary-wide-button" onClick={() => navigate("/tasks")}>タスク画面を開く</button></section>
-            <section className="secretary-card secretary-utility-card"><strong>繰り返し予定</strong><p className="secretary-muted">朝のルーティン・勉強時間などをカレンダーで管理できます</p><button type="button" className="secretary-wide-button" onClick={handleGenerateRecurringEventsFromDashboard}>管理する</button></section>
-            <section className="secretary-card secretary-utility-card"><strong>昨日の予定をコピー</strong><p className="secretary-muted">昨日の予定を選択日にまとめて複製します。</p><button type="button" className="secretary-wide-button" onClick={handleCopyYesterdayEventsToSelectedDate} disabled={assistantActionId === "copy-yesterday"}>コピーする</button></section>
+          <div className="secretary-bottom-strip secretary-bottom-strip--worklog">
+            <section className="secretary-card secretary-task-mini-card">
+              <div className="secretary-card__title"><span>●</span><h2>未完了タスク</h2></div>
+              <div className="secretary-mini-task-list">
+                {todoTasks.slice(0, 3).map((task) => (
+                  <button key={task.id} type="button" onClick={() => handleAddTaskToCalendar(task)} disabled={assistantActionId === `task-${task.id}`}>
+                    <strong>{task.title}</strong><span>{getTaskProjectName(task, projects)}</span><small>{formatMinutes(Math.max(10, task.estimated_minutes || 30))}</small>
+                  </button>
+                ))}
+                {todoTasks.length === 0 && <p className="dashboard-empty-message">未完了タスクはありません。</p>}
+              </div>
+              <Link className="secretary-link" to="/tasks">すべての未完了タスクを見る</Link>
+            </section>
+
+            <section className="secretary-card secretary-task-mini-card">
+              <div className="secretary-card__title"><span>✓</span><h2>最近完了したタスク</h2></div>
+              <div className="secretary-mini-task-list secretary-mini-task-list--done">
+                {recentlyCompletedTasks.map((task) => (
+                  <div key={task.id}>
+                    <strong>{task.title}</strong><span>{getTaskProjectName(task, projects)}</span><small>{formatMinutes(Math.max(0, task.actual_minutes))}</small>
+                  </div>
+                ))}
+                {recentlyCompletedTasks.length === 0 && <p className="dashboard-empty-message">完了タスクはまだありません。</p>}
+              </div>
+              <Link className="secretary-link" to="/tasks">すべての完了タスクを見る</Link>
+            </section>
+
+            <section className="secretary-card secretary-utility-card"><strong>繰り返し予定・昨日の予定</strong><p className="secretary-muted">ルーティンを登録し、昨日の予定を選択日に複製できます。</p><div className="secretary-utility-actions"><button type="button" className="secretary-wide-button" onClick={handleGenerateRecurringEventsFromDashboard}>繰り返しを管理</button><button type="button" className="secretary-wide-button" onClick={handleCopyYesterdayEventsToSelectedDate} disabled={assistantActionId === "copy-yesterday"}>昨日をコピー</button></div></section>
           </div>
         </>
       )}
