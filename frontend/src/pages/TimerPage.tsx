@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { NavLink } from "react-router-dom";
 import { createWorkLog } from "../api/workLogs";
+import { createStudyLog, fetchStudySubjects } from "../api/study";
+import type { StudySubject } from "../api/study";
 import { fetchCalendarEvents } from "../api/calendarEvents";
 import type { CalendarEvent } from "../api/calendarEvents";
 import { createUrgentTask, fetchTasks, updateTaskStatus } from "../api/tasks";
@@ -129,6 +131,13 @@ function toApiDateTime(date: Date) {
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 19);
 }
 
+function toDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function clampScore(value: number) {
   if (Number.isNaN(value)) return 5;
   return Math.min(5, Math.max(1, value));
@@ -137,6 +146,7 @@ function clampScore(value: number) {
 export default function TimerPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [studySubjects, setStudySubjects] = useState<StudySubject[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedCalendarEventId, setSelectedCalendarEventId] = useState("");
   const [status, setStatus] = useState<TimerStatus>("idle");
@@ -146,6 +156,12 @@ export default function TimerPage() {
   const [elapsedBeforePauseMs, setElapsedBeforePauseMs] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [memo, setMemo] = useState("");
+  const [studyAutoEnabled, setStudyAutoEnabled] = useState(false);
+  const [studySubjectId, setStudySubjectId] = useState("");
+  const [studyMaterial, setStudyMaterial] = useState("");
+  const [studyUnit, setStudyUnit] = useState("");
+  const [studyMethod, setStudyMethod] = useState("問題演習");
+  const [studyUnderstanding, setStudyUnderstanding] = useState("3");
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -220,9 +236,11 @@ export default function TimerPage() {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchTasks(), fetchCalendarEvents()]).then(([taskData, eventData]) => {
+    Promise.all([fetchTasks(), fetchCalendarEvents(), fetchStudySubjects()]).then(([taskData, eventData, subjectData]) => {
       setTasks(taskData);
       setCalendarEvents(eventData);
+      setStudySubjects(subjectData);
+      setStudySubjectId((current) => current || String(subjectData[0]?.id ?? ""));
     });
   }, []);
 
@@ -297,6 +315,13 @@ export default function TimerPage() {
   const isTimerActive = status === "running" || status === "paused";
   const selectedTaskIsUrgent = selectedTask?.task_type === "urgent";
 
+  useEffect(() => {
+    if (!studyAutoEnabled || studyUnit.trim()) return;
+    const inferredUnit = selectedTask?.title ?? selectedCalendarEvent?.title ?? "";
+    if (inferredUnit) {
+      setStudyUnit(inferredUnit);
+    }
+  }, [selectedCalendarEvent?.title, selectedTask?.title, studyAutoEnabled, studyUnit]);
 
   function handleSelectCalendarEvent(eventId: string) {
     setSelectedCalendarEventId(eventId);
@@ -504,13 +529,34 @@ export default function TimerPage() {
         await updateTaskStatus(Number(selectedTaskId), "completed");
       }
 
+      let studySavedMessage = "";
+      if (studyAutoEnabled) {
+        if (!studySubjectId) {
+          studySavedMessage = " / 学習ログは科目未選択のため未保存";
+        } else {
+          await createStudyLog({
+            subject_id: Number(studySubjectId),
+            studied_on: toDateKey(startedAt),
+            started_at: toApiDateTime(startedAt),
+            ended_at: toApiDateTime(now),
+            duration_minutes: durationMinutes,
+            material: studyMaterial.trim() || null,
+            unit: studyUnit.trim() || selectedTask?.title || selectedCalendarEvent?.title || null,
+            method: studyMethod.trim() || "タイマー",
+            understanding: studyUnderstanding ? Number(studyUnderstanding) : null,
+            memo: memo.trim() || null,
+          });
+          studySavedMessage = " / 学習ログにも保存";
+        }
+      }
+
       const comparisonMessage = savedLog.difference_minutes !== null && savedLog.difference_minutes !== undefined
         ? ` / ${formatDifferenceMinutes(savedLog.difference_minutes)}`
         : "";
       const resumeMessage = interruptedTimerSnapshot
         ? " / 元タスクを再開できます"
         : "";
-      setSaveMessage(`実績を保存しました（${durationMinutes}分${comparisonMessage}${resumeMessage}）`);
+      setSaveMessage(`実績を保存しました（${durationMinutes}分${comparisonMessage}${studySavedMessage}${resumeMessage}）`);
       const [taskData, eventData] = await Promise.all([
         fetchTasks(),
         fetchCalendarEvents(),
@@ -534,6 +580,7 @@ export default function TimerPage() {
     setElapsedSeconds(0);
     setMemo("");
     setSelectedCalendarEventId("");
+    setStudyUnit("");
     setInterruptedTimerSnapshot(null);
     setSaveMessage("");
     setErrorMessage("");
@@ -661,6 +708,53 @@ export default function TimerPage() {
               実績メモ
               <textarea value={memo} onChange={(e) => setMemo(e.target.value)} disabled={isSaving} placeholder="例：API実装、エラー調査など" />
             </label>
+
+            <section className="timer-study-link-card">
+              <div className="timer-study-link-card__header">
+                <div>
+                  <strong>学習ログにも自動入力</strong>
+                  <p>タイマー終了時に、選択中のTODO/予定をStudyPlus風ログへ同時保存します。</p>
+                </div>
+                <label className="timer-study-toggle">
+                  <input type="checkbox" checked={studyAutoEnabled} onChange={(e) => setStudyAutoEnabled(e.target.checked)} disabled={isSaving || isTimerActive} />
+                  ON
+                </label>
+              </div>
+              <div className="timer-study-link-grid">
+                <label>
+                  科目
+                  <select value={studySubjectId} onChange={(e) => setStudySubjectId(e.target.value)} disabled={!studyAutoEnabled || isSaving}>
+                    <option value="">科目を選択</option>
+                    {studySubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+                  </select>
+                </label>
+                <label>
+                  教材
+                  <input value={studyMaterial} onChange={(e) => setStudyMaterial(e.target.value)} disabled={!studyAutoEnabled || isSaving} placeholder="例：CPA テキスト" />
+                </label>
+                <label>
+                  単元
+                  <input value={studyUnit} onChange={(e) => setStudyUnit(e.target.value)} disabled={!studyAutoEnabled || isSaving} placeholder="TODO名から自動補完" />
+                </label>
+                <label>
+                  方法
+                  <select value={studyMethod} onChange={(e) => setStudyMethod(e.target.value)} disabled={!studyAutoEnabled || isSaving}>
+                    <option value="講義">講義</option>
+                    <option value="問題演習">問題演習</option>
+                    <option value="復習">復習</option>
+                    <option value="答練">答練</option>
+                    <option value="タイマー">タイマー</option>
+                  </select>
+                </label>
+                <label>
+                  理解度
+                  <select value={studyUnderstanding} onChange={(e) => setStudyUnderstanding(e.target.value)} disabled={!studyAutoEnabled || isSaving}>
+                    {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+              </div>
+              {studySubjects.length === 0 && <p className="timer-study-link-card__empty">先に「学習ログ」画面で科目を作成してください。</p>}
+            </section>
           </section>
 
           <section className="timer-card timer-stats-card">

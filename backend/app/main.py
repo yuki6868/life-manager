@@ -25,6 +25,7 @@ from app.api.project_reflections import router as project_reflection_router
 from app.api.estimations import router as estimation_router
 from app.api.gap_tasks import router as gap_task_router
 from app.api.assistant import router as assistant_router
+from app.api.study import router as study_router
 
 
 @asynccontextmanager
@@ -65,6 +66,7 @@ app.include_router(project_reflection_router)
 app.include_router(estimation_router)
 app.include_router(gap_task_router)
 app.include_router(assistant_router)
+app.include_router(study_router)
 
 
 @app.get("/health")

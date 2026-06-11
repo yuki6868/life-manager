@@ -11,6 +11,7 @@ import TimerPage from "./pages/TimerPage";
 import SettingsPage from "./pages/SettingsPage";
 import WeekCalendarPage from "./pages/WeekCalendarPage";
 import WorkLogsPage from "./pages/WorkLogsPage";
+import StudyPage from "./pages/StudyPage";
 import { APP_SETTINGS_UPDATED_EVENT, type EnergyLevel, readEnergyLevel, readFocusMode } from "./utils/appSettings";
 import "./App.css";
 
@@ -41,6 +42,7 @@ const menuItems: MenuItem[] = [
   { path: "/tasks", label: "タスク", icon: "☷" },
   { path: "/timer", label: "タイマー", icon: "◷" },
   { path: "/work-logs", label: "工数・進捗", icon: "▥" },
+  { path: "/study", label: "学習ログ", icon: "✎" },
   { path: "/reflections", label: "振り返り", icon: "✓" },
   { path: "/gap-tasks", label: "スキマタスク", icon: "♢" },
   { path: "/goals", label: "目標", icon: "◎" },
@@ -134,6 +136,7 @@ function AppShell() {
             <Route path="/calendar/week" element={<WeekCalendarPage />} />
             <Route path="/timer" element={<TimerPage />} />
             <Route path="/work-logs" element={<WorkLogsPage />} />
+            <Route path="/study" element={<StudyPage />} />
             <Route path="/reflections" element={<ReflectionsPage />} />
             <Route path="/gap-tasks" element={<GapTasksPage />} />
             <Route path="/settings" element={<SettingsPage />} />
