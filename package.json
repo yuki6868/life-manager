@@ -8,9 +8,51 @@
     "electron:dev": "electron .",
     "desktop:dev": "bash scripts/run_electron_dev.sh",
     "frontend:build": "npm --prefix frontend run build",
-    "desktop:build:frontend": "npm run frontend:build"
+    "desktop:build:frontend": "npm run frontend:build",
+    "backend:build:desktop": "bash scripts/build_desktop_backend.sh",
+    "desktop:build": "npm run backend:build:desktop && npm run frontend:build",
+    "desktop:dist": "npm run desktop:build && npm run desktop:check && electron-builder",
+    "desktop:dist:dir": "npm run desktop:build && npm run desktop:check && electron-builder --dir",
+    "desktop:check": "node scripts/desktop_check.cjs"
   },
   "devDependencies": {
-    "electron": "^39.2.6"
+    "electron": "^39.2.6",
+    "electron-builder": "^26.15.2"
+  },
+  "build": {
+    "appId": "com.yuki.life-manager",
+    "productName": "Life Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist/life-manager-backend",
+        "to": "backend/life-manager-backend"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}-setup.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
   }
 }
