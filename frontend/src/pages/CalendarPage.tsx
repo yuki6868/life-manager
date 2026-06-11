@@ -277,6 +277,13 @@ export default function CalendarPage() {
   const [timelineMessage, setTimelineMessage] = useState("");
   const suppressEventClickRef = useRef(false);
 
+  function suppressNextEventClick() {
+    suppressEventClickRef.current = true;
+    window.setTimeout(() => {
+      suppressEventClickRef.current = false;
+    }, 0);
+  }
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [startTime, setStartTime] = useState(() => {
@@ -754,6 +761,7 @@ export default function CalendarPage() {
       }
 
       const end = toSelectedDateTimeValue(selectedDate, resizingEvent.previewEndMinute);
+      suppressNextEventClick();
       setResizingEvent(null);
 
       await updateCalendarEvent(targetEvent.id, {
@@ -794,7 +802,7 @@ export default function CalendarPage() {
         draggingEvent.previewEndMinute
       );
 
-      suppressEventClickRef.current = true;
+      suppressNextEventClick();
       setDraggingEvent(null);
 
       await updateCalendarEvent(targetEvent.id, {
@@ -1042,6 +1050,13 @@ export default function CalendarPage() {
                       onMouseDown={(e) => handleEventDragStart(e, event)}
                       onClick={(e) => {
                         e.stopPropagation();
+                        const clickedElement = e.target as HTMLElement;
+                        if (
+                          clickedElement.closest("[data-calendar-resize-handle='true']") ||
+                          clickedElement.closest("[data-calendar-event-actions='true']")
+                        ) {
+                          return;
+                        }
                         if (suppressEventClickRef.current) {
                           suppressEventClickRef.current = false;
                           return;
