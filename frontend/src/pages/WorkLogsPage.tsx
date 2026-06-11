@@ -52,6 +52,46 @@ function addDays(date: Date, days: number) {
   return next;
 }
 
+function getMonthStart(date: Date) {
+  const base = new Date(date);
+  base.setHours(0, 0, 0, 0);
+  base.setDate(1);
+  return base;
+}
+
+function getMonthEnd(date: Date) {
+  const base = getMonthStart(date);
+  base.setMonth(base.getMonth() + 1);
+  base.setDate(0);
+  return base;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function escapeCsvValue(value: string | number | null | undefined) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const csv = [headers, ...rows]
+    .map((row) => row.map(escapeCsvValue).join(","))
+    .join("\n");
+  const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 type SummaryItem = {
   id: string;
   label: string;
@@ -65,6 +105,8 @@ type DailyChartItem = {
   focusMinutes: number;
   otherMinutes: number;
 };
+
+type WorkLogsPeriod = "weekly" | "monthly";
 
 type KpiCardProps = {
   icon: string;
@@ -103,7 +145,8 @@ export default function WorkLogsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [periodOffset, setPeriodOffset] = useState(0);
+  const [periodMode, setPeriodMode] = useState<WorkLogsPeriod>("weekly");
 
   async function loadData() {
     setIsLoading(true);
@@ -139,28 +182,37 @@ export default function WorkLogsPage() {
     return new Map(projects.map((project) => [project.id, project]));
   }, [projects]);
 
-  const selectedWeekStart = useMemo(() => {
-    const start = getWeekStart(new Date());
-    start.setDate(start.getDate() + weekOffset * 7);
-    return start;
-  }, [weekOffset]);
+  const selectedPeriod = useMemo(() => {
+    const today = new Date();
 
-  const weekDays = useMemo(() => {
-    return Array.from({ length: 7 }, (_, index) => addDays(selectedWeekStart, index));
-  }, [selectedWeekStart]);
+    if (periodMode === "monthly") {
+      const target = addMonths(today, periodOffset);
+      return { start: getMonthStart(target), end: getMonthEnd(target) };
+    }
 
-  const selectedWeekEnd = useMemo(() => addDays(selectedWeekStart, 6), [selectedWeekStart]);
+    const start = getWeekStart(today);
+    start.setDate(start.getDate() + periodOffset * 7);
+    return { start, end: addDays(start, 6) };
+  }, [periodMode, periodOffset]);
 
-  const weekLabel = `${toDateKey(selectedWeekStart).replaceAll("-", "/")} - ${toDateKey(selectedWeekEnd).replaceAll("-", "/")}`;
+  const periodDays = useMemo(() => {
+    const length = Math.max(1, Math.round((selectedPeriod.end.getTime() - selectedPeriod.start.getTime()) / 86400000) + 1);
+    return Array.from({ length }, (_, index) => addDays(selectedPeriod.start, index));
+  }, [selectedPeriod.end, selectedPeriod.start]);
+
+  const startKey = toDateKey(selectedPeriod.start);
+  const endKey = toDateKey(selectedPeriod.end);
+  const periodLabel = startKey === endKey
+    ? startKey.replaceAll("-", "/")
+    : `${startKey.replaceAll("-", "/")} - ${endKey.replaceAll("-", "/")}`;
+  const periodName = periodMode === "weekly" ? "週" : "月";
 
   const weeklyLogs = useMemo(() => {
-    const startKey = toDateKey(selectedWeekStart);
-    const endKey = toDateKey(selectedWeekEnd);
     return workLogs.filter((log) => {
       const key = formatDate(log.started_at);
       return key >= startKey && key <= endKey;
     });
-  }, [selectedWeekEnd, selectedWeekStart, workLogs]);
+  }, [endKey, startKey, workLogs]);
 
   const weeklyTaskIds = useMemo(() => {
     return new Set(weeklyLogs.map((log) => log.task_id).filter((id): id is number => id !== null && id !== undefined));
@@ -196,7 +248,7 @@ export default function WorkLogsPage() {
   const productivityScore = Math.min(100, Math.round(((workProgress ?? 0) * 0.55) + ((taskProgress ?? 0) * 0.45)));
 
   const dailyChart = useMemo<DailyChartItem[]>(() => {
-    return weekDays.map((date, index) => {
+    return periodDays.map((date) => {
       const key = toDateKey(date);
       const logs = weeklyLogs.filter((log) => formatDate(log.started_at) === key);
       const focus = logs.reduce((sum, log) => {
@@ -206,12 +258,12 @@ export default function WorkLogsPage() {
       const total = logs.reduce((sum, log) => sum + log.duration_minutes, 0);
       return {
         key,
-        label: `${date.getMonth() + 1}/${date.getDate()} (${DAY_LABELS[index]})`,
+        label: `${date.getMonth() + 1}/${date.getDate()} (${DAY_LABELS[(date.getDay() + 6) % 7]})`,
         focusMinutes: focus,
         otherMinutes: Math.max(0, total - focus),
       };
     });
-  }, [taskById, weekDays, weeklyLogs]);
+  }, [taskById, periodDays, weeklyLogs]);
 
   const taskSummary = useMemo<SummaryItem[]>(() => {
     const map = new Map<string, SummaryItem>();
@@ -273,7 +325,8 @@ export default function WorkLogsPage() {
   }, [projectSummary, totalMinutes]);
 
   const focusHeatmap = useMemo(() => {
-    const cells = weekDays.flatMap((date, dayIndex) => {
+    const heatmapSourceDays = periodMode === "monthly" ? periodDays.filter((_, index) => index % 7 === 0).slice(0, 7) : periodDays;
+    const cells = heatmapSourceDays.flatMap((date, dayIndex) => {
       return [0, 6, 12, 18].map((hour) => {
         const key = toDateKey(date);
         const minutes = weeklyLogs.reduce((sum, log) => {
@@ -287,11 +340,40 @@ export default function WorkLogsPage() {
     });
     const max = Math.max(1, ...cells.map((cell) => cell.minutes));
     return cells.map((cell) => ({ ...cell, level: Math.ceil((cell.minutes / max) * 5) }));
-  }, [weekDays, weeklyLogs]);
+  }, [periodDays, periodMode, weeklyLogs]);
 
   async function handleDelete(id: number) {
     await deleteWorkLog(id);
     await loadData();
+  }
+
+  function handleExport() {
+    const rows = weeklyLogs.map((log) => {
+      const task = log.task_id ? taskById.get(log.task_id) : null;
+      const project = task ? projectById.get(task.project_id) : null;
+
+      return [
+        formatDateTime(log.started_at),
+        formatDateTime(log.ended_at),
+        task?.title ?? "",
+        project?.title ?? "",
+        log.duration_minutes,
+        log.planned_minutes ?? "",
+        log.difference_minutes ?? "",
+        log.memo ?? "",
+      ];
+    });
+
+    downloadCsv(
+      `work-logs-${periodMode}-${startKey}_${endKey}.csv`,
+      ["開始", "終了", "タスク", "プロジェクト", "実績分", "計画分", "差分分", "メモ"],
+      rows,
+    );
+  }
+
+  function changePeriodMode(nextMode: WorkLogsPeriod) {
+    setPeriodMode(nextMode);
+    setPeriodOffset(0);
   }
 
   return (
@@ -302,14 +384,22 @@ export default function WorkLogsPage() {
           <h1>工数・進捗</h1>
         </div>
         <div className="worklogs-toolbar__actions">
-          <button type="button" className="worklogs-range-button">{weekLabel}</button>
+          <button type="button" className="worklogs-range-button">{periodLabel}</button>
           <div className="worklogs-week-switch">
-            <button type="button" onClick={() => setWeekOffset((current) => current - 1)} aria-label="前の週">‹</button>
-            <button type="button" onClick={() => setWeekOffset((current) => current + 1)} aria-label="次の週">›</button>
+            <button type="button" onClick={() => setPeriodOffset((current) => current - 1)} aria-label="前の週">‹</button>
+            <button type="button" onClick={() => setPeriodOffset((current) => current + 1)} aria-label="次の週">›</button>
           </div>
-          <button type="button" className="worklogs-tab-button">週</button>
-          <button type="button" className="worklogs-tab-button worklogs-tab-button--active">月</button>
-          <button type="button" className="worklogs-export-button">⇩ エクスポート</button>
+          <button
+            type="button"
+            className={periodMode === "weekly" ? "worklogs-tab-button worklogs-tab-button--active" : "worklogs-tab-button"}
+            onClick={() => changePeriodMode("weekly")}
+          >週</button>
+          <button
+            type="button"
+            className={periodMode === "monthly" ? "worklogs-tab-button worklogs-tab-button--active" : "worklogs-tab-button"}
+            onClick={() => changePeriodMode("monthly")}
+          >月</button>
+          <button type="button" className="worklogs-export-button" onClick={handleExport}>⇩ エクスポート</button>
         </div>
       </header>
 
@@ -319,7 +409,7 @@ export default function WorkLogsPage() {
       {!isLoading && (
         <>
           <section className="worklogs-panel worklogs-summary-panel">
-            <h2>今週のサマリー</h2>
+            <h2>{periodName}のサマリー</h2>
             <div className="worklogs-kpi-grid">
               <KpiCard icon="◷" label="総工数" value={formatMinutes(totalMinutes)} note={plannedMinutes > 0 ? `計画: ${formatMinutes(plannedMinutes)}` : "計画データなし"} progress={workProgress ?? undefined} />
               <KpiCard icon="✦" label="集中時間" value={formatMinutes(focusMinutes)} note={`総工数の ${totalMinutes ? Math.round((focusMinutes / totalMinutes) * 100) : 0}%`} progress={focusProgress ?? undefined} tone="purple" />
@@ -421,7 +511,7 @@ export default function WorkLogsPage() {
 
             <section className="worklogs-panel worklogs-goal-panel">
               <h2>計画に対する進捗</h2>
-              <div className="worklogs-goal-row"><span>週の計画工数</span><strong>{formatMinutes(totalMinutes)} / {plannedMinutes > 0 ? formatMinutes(plannedMinutes) : "計画なし"}</strong><div className="worklogs-progress"><i style={{ width: `${Math.min(100, workProgress ?? 0)}%` }} /></div></div>
+              <div className="worklogs-goal-row"><span>期間の計画工数</span><strong>{formatMinutes(totalMinutes)} / {plannedMinutes > 0 ? formatMinutes(plannedMinutes) : "計画なし"}</strong><div className="worklogs-progress"><i style={{ width: `${Math.min(100, workProgress ?? 0)}%` }} /></div></div>
               <div className="worklogs-goal-row"><span>集中時間の計画</span><strong>{formatMinutes(focusMinutes)} / {focusTargetMinutes > 0 ? formatMinutes(focusTargetMinutes) : "計画なし"}</strong><div className="worklogs-progress worklogs-progress--green"><i style={{ width: `${Math.min(100, focusProgress ?? 0)}%` }} /></div></div>
               <div className="worklogs-goal-row"><span>実績タスクの完了率</span><strong>{weeklyCompletedTasks}件 / {taskTargetCount > 0 ? `${taskTargetCount}件` : "対象なし"}</strong><div className="worklogs-progress worklogs-progress--orange"><i style={{ width: `${Math.min(100, taskProgress ?? 0)}%` }} /></div></div>
             </section>
@@ -430,10 +520,10 @@ export default function WorkLogsPage() {
           <section className="worklogs-panel worklogs-table-panel">
             <div className="worklogs-panel__header">
               <h2>作業ログ</h2>
-              <span>{totalLogs}件</span>
+              <span>{periodName}: {totalLogs}件</span>
             </div>
             {weeklyLogs.length === 0 ? (
-              <p className="worklogs-empty">この週の作業ログはまだありません。</p>
+              <p className="worklogs-empty">この期間の作業ログはまだありません。</p>
             ) : (
               <div className="worklogs-table-wrap">
                 <table className="worklogs-table">

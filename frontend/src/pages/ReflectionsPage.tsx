@@ -85,6 +85,26 @@ function toPercent(value: number, total: number) {
   return Math.round((value / total) * 100);
 }
 
+function escapeCsvValue(value: string | number | null | undefined) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const csv = [headers, ...rows]
+    .map((row) => row.map(escapeCsvValue).join(","))
+    .join("\n");
+  const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function getStreakDays(reflections: Reflection[]) {
   const reflectedDates = new Set(reflections.map((reflection) => reflection.reflection_date));
   let cursor = new Date();
@@ -396,6 +416,23 @@ export default function ReflectionsPage() {
     await loadData();
   }
 
+  function handleExport() {
+    const rows = periodReflections.map((reflection) => [
+      reflection.reflection_date,
+      reflection.good_things ?? "",
+      reflection.bad_things ?? "",
+      reflection.improvements ?? "",
+      reflection.delay_reasons ?? "",
+      reflection.memo ?? "",
+    ]);
+
+    downloadCsv(
+      `reflections-${activeTab}-${startKey}_${endKey}.csv`,
+      ["振り返り日", "よかったこと", "課題", "改善アクション", "遅延理由", "メモ"],
+      rows,
+    );
+  }
+
   return (
     <section className="reflections-page">
       <header className="reflections-toolbar">
@@ -409,7 +446,7 @@ export default function ReflectionsPage() {
             <button type="button" onClick={() => setPeriodOffset((current) => current - 1)} aria-label="前の期間">‹</button>
             <button type="button" onClick={() => setPeriodOffset((current) => current + 1)} aria-label="次の期間">›</button>
           </div>
-          <button type="button" className="reflections-export-button">⇩ エクスポート</button>
+          <button type="button" className="reflections-export-button" onClick={handleExport}>⇩ エクスポート</button>
           <button type="button" className="reflections-primary-button" onClick={handleCreate}>＋ 振り返りを記録</button>
         </div>
       </header>
