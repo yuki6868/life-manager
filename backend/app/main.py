@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.db.session import engine, AsyncSessionLocal
 from app.db.init_db import (
     create_initial_user,
+    ensure_study_category_tables,
     ensure_tasks_urgent_columns,
     ensure_work_logs_gap_task_column,
 )
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await ensure_work_logs_gap_task_column(db)
         await ensure_tasks_urgent_columns(db)
+        await ensure_study_category_tables(db)
         await create_initial_user(db)
 
     yield

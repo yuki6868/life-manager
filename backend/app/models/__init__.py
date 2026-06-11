@@ -8,6 +8,7 @@ from app.models.work_log import WorkLog
 from app.models.reflection import Reflection
 from app.models.project_reflection import ProjectReflection
 from app.models.gap_task import GapTask
+from app.models.study_category import StudyCategory
 from app.models.study_subject import StudySubject
 from app.models.study_log import StudyLog
 

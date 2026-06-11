@@ -3,8 +3,33 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 
+class StudyCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    target_minutes: int = 0
+    memo: str | None = None
+
+
+class StudyCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    target_minutes: int | None = None
+    memo: str | None = None
+
+
+class StudyCategoryResponse(BaseModel):
+    id: int
+    name: str
+    target_minutes: int
+    memo: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class StudySubjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    category_id: int | None = None
     exam_name: str | None = None
     target_minutes: int = 0
     color: str | None = None
@@ -13,6 +38,7 @@ class StudySubjectCreate(BaseModel):
 
 class StudySubjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    category_id: int | None = None
     exam_name: str | None = None
     target_minutes: int | None = None
     color: str | None = None
@@ -22,6 +48,8 @@ class StudySubjectUpdate(BaseModel):
 class StudySubjectResponse(BaseModel):
     id: int
     name: str
+    category_id: int | None
+    category_name: str | None = None
     exam_name: str | None
     target_minutes: int
     color: str | None
@@ -63,6 +91,8 @@ class StudyLogResponse(BaseModel):
     id: int
     subject_id: int
     subject_name: str
+    category_id: int | None = None
+    category_name: str | None = None
     studied_on: date
     started_at: datetime | None
     ended_at: datetime | None
@@ -82,10 +112,23 @@ class StudyLogResponse(BaseModel):
 class StudySubjectSummary(BaseModel):
     subject_id: int
     subject_name: str
+    category_id: int | None = None
+    category_name: str | None = None
     exam_name: str | None
     target_minutes: int
     total_minutes: int
     log_count: int
+
+
+class StudyCategorySummary(BaseModel):
+    category_id: int | None
+    category_name: str
+    target_minutes: int
+    subject_target_minutes: int
+    effective_target_minutes: int
+    total_minutes: int
+    log_count: int
+    subject_count: int
 
 
 class StudyDailySummary(BaseModel):
@@ -96,5 +139,9 @@ class StudyDailySummary(BaseModel):
 class StudySummaryResponse(BaseModel):
     total_minutes: int
     total_logs: int
+    subject_target_minutes: int
+    category_target_minutes: int
+    effective_target_minutes: int
+    category_summaries: list[StudyCategorySummary]
     subject_summaries: list[StudySubjectSummary]
     daily_summaries: list[StudyDailySummary]

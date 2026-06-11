@@ -61,3 +61,29 @@ async def ensure_tasks_urgent_columns(db: AsyncSession) -> None:
 
     if statements:
         await db.commit()
+
+
+async def ensure_study_category_tables(db: AsyncSession) -> None:
+    """既存DBにも学習カテゴリと科目の category_id を追加する軽量マイグレーション。"""
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS study_categories (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name VARCHAR(120) NOT NULL UNIQUE,
+                target_minutes INTEGER NOT NULL DEFAULT 0,
+                memo TEXT,
+                created_at DATETIME,
+                updated_at DATETIME
+            )
+            """
+        )
+    )
+
+    result = await db.execute(text("PRAGMA table_info(study_subjects)"))
+    column_names = {row[1] for row in result.fetchall()}
+
+    if "category_id" not in column_names:
+        await db.execute(text("ALTER TABLE study_subjects ADD COLUMN category_id INTEGER"))
+
+    await db.commit()

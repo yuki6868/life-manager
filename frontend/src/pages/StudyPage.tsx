@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import {
+  createStudyCategory,
   createStudyLog,
   createStudySubject,
+  deleteStudyCategory,
   deleteStudyLog,
+  deleteStudySubject,
+  fetchStudyCategories,
   fetchStudyLogs,
   fetchStudySubjects,
   fetchStudySummary,
+  updateStudyCategory,
   updateStudyLog,
+  updateStudySubject,
+  type StudyCategory,
   type StudyLog,
   type StudySubject,
   type StudySummary,
@@ -44,15 +51,7 @@ function formatMinutes(minutes: number) {
 }
 
 function buildPieGradient(items: { total_minutes: number }[]) {
-  const colors = [
-    "#2563eb",
-    "#22c55e",
-    "#f97316",
-    "#8b5cf6",
-    "#06b6d4",
-    "#ef4444",
-    "#64748b",
-  ];
+  const colors = ["#2563eb", "#22c55e", "#f97316", "#8b5cf6", "#06b6d4", "#ef4444", "#64748b"];
   const total = items.reduce((sum, item) => sum + item.total_minutes, 0);
   if (total <= 0) return "#e2e8f0";
   let current = 0;
@@ -67,23 +66,22 @@ function buildPieGradient(items: { total_minutes: number }[]) {
 }
 
 function getPieColor(index: number) {
-  const colors = [
-    "#2563eb",
-    "#22c55e",
-    "#f97316",
-    "#8b5cf6",
-    "#06b6d4",
-    "#ef4444",
-    "#64748b",
-  ];
+  const colors = ["#2563eb", "#22c55e", "#f97316", "#8b5cf6", "#06b6d4", "#ef4444", "#64748b"];
   return colors[index % colors.length];
 }
 
 const DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"];
 
+const defaultCategoryForm = {
+  name: "公認会計士",
+  target_minutes: 0,
+  memo: "",
+};
+
 const defaultSubjectForm = {
   name: "",
-  exam_name: "公認会計士",
+  category_id: "",
+  exam_name: "",
   target_minutes: 0,
   memo: "",
 };
@@ -96,6 +94,20 @@ type StudyLogEditForm = {
   unit: string;
   method: string;
   understanding: number | "";
+  memo: string;
+};
+
+type SubjectEditForm = {
+  name: string;
+  category_id: string;
+  exam_name: string;
+  target_minutes: number;
+  memo: string;
+};
+
+type CategoryEditForm = {
+  name: string;
+  target_minutes: number;
   memo: string;
 };
 
@@ -112,7 +124,26 @@ function toEditForm(log: StudyLog): StudyLogEditForm {
   };
 }
 
+function toSubjectEditForm(subject: StudySubject): SubjectEditForm {
+  return {
+    name: subject.name,
+    category_id: subject.category_id ? String(subject.category_id) : "",
+    exam_name: subject.exam_name ?? "",
+    target_minutes: subject.target_minutes,
+    memo: subject.memo ?? "",
+  };
+}
+
+function toCategoryEditForm(category: StudyCategory): CategoryEditForm {
+  return {
+    name: category.name,
+    target_minutes: category.target_minutes,
+    memo: category.memo ?? "",
+  };
+}
+
 export default function StudyPage() {
+  const [categories, setCategories] = useState<StudyCategory[]>([]);
   const [subjects, setSubjects] = useState<StudySubject[]>([]);
   const [logs, setLogs] = useState<StudyLog[]>([]);
   const [summary, setSummary] = useState<StudySummary | null>(null);
@@ -121,6 +152,11 @@ export default function StudyPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [editingLogId, setEditingLogId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<StudyLogEditForm | null>(null);
+  const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
+  const [subjectEditForm, setSubjectEditForm] = useState<SubjectEditForm | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
+  const [categoryEditForm, setCategoryEditForm] = useState<CategoryEditForm | null>(null);
+  const [categoryForm, setCategoryForm] = useState(defaultCategoryForm);
   const [subjectForm, setSubjectForm] = useState(defaultSubjectForm);
   const [logForm, setLogForm] = useState({
     subject_id: "",
@@ -138,10 +174,7 @@ export default function StudyPage() {
     start.setDate(start.getDate() + weekOffset * 7);
     return start;
   }, [weekOffset]);
-  const selectedWeekEnd = useMemo(
-    () => addDays(selectedWeekStart, 6),
-    [selectedWeekStart],
-  );
+  const selectedWeekEnd = useMemo(() => addDays(selectedWeekStart, 6), [selectedWeekStart]);
   const startDate = toDateKey(selectedWeekStart);
   const endDate = toDateKey(selectedWeekEnd);
   const weekLabel = `${startDate.replaceAll("-", "/")} - ${endDate.replaceAll("-", "/")}`;
@@ -150,14 +183,20 @@ export default function StudyPage() {
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const [subjectData, logData, summaryData] = await Promise.all([
+      const [categoryData, subjectData, logData, summaryData] = await Promise.all([
+        fetchStudyCategories(),
         fetchStudySubjects(),
         fetchStudyLogs({ start_date: startDate, end_date: endDate }),
         fetchStudySummary({ start_date: startDate, end_date: endDate }),
       ]);
+      setCategories(categoryData);
       setSubjects(subjectData);
       setLogs(logData);
       setSummary(summaryData);
+      setSubjectForm((current) => ({
+        ...current,
+        category_id: current.category_id || String(categoryData[0]?.id ?? ""),
+      }));
       setLogForm((current) => ({
         ...current,
         subject_id: current.subject_id || String(subjectData[0]?.id ?? ""),
@@ -174,16 +213,77 @@ export default function StudyPage() {
     loadData();
   }, [startDate, endDate]);
 
+  async function handleCreateCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!categoryForm.name.trim()) return;
+    await createStudyCategory({
+      name: categoryForm.name.trim(),
+      target_minutes: Number(categoryForm.target_minutes) || 0,
+      memo: categoryForm.memo.trim() || null,
+    });
+    setCategoryForm(defaultCategoryForm);
+    await loadData();
+  }
+
+  function startEditCategory(category: StudyCategory) {
+    setEditingCategoryId(category.id);
+    setCategoryEditForm(toCategoryEditForm(category));
+  }
+
+  async function handleUpdateCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (editingCategoryId === null || categoryEditForm === null) return;
+    await updateStudyCategory(editingCategoryId, {
+      name: categoryEditForm.name.trim(),
+      target_minutes: Number(categoryEditForm.target_minutes) || 0,
+      memo: categoryEditForm.memo.trim() || null,
+    });
+    setEditingCategoryId(null);
+    setCategoryEditForm(null);
+    await loadData();
+  }
+
+  async function handleDeleteCategory(id: number) {
+    await deleteStudyCategory(id);
+    await loadData();
+  }
+
   async function handleCreateSubject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!subjectForm.name.trim()) return;
     await createStudySubject({
       name: subjectForm.name.trim(),
+      category_id: subjectForm.category_id ? Number(subjectForm.category_id) : null,
       exam_name: subjectForm.exam_name.trim() || null,
       target_minutes: Number(subjectForm.target_minutes) || 0,
       memo: subjectForm.memo.trim() || null,
     });
-    setSubjectForm(defaultSubjectForm);
+    setSubjectForm((current) => ({ ...defaultSubjectForm, category_id: current.category_id }));
+    await loadData();
+  }
+
+  function startEditSubject(subject: StudySubject) {
+    setEditingSubjectId(subject.id);
+    setSubjectEditForm(toSubjectEditForm(subject));
+  }
+
+  async function handleUpdateSubject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (editingSubjectId === null || subjectEditForm === null) return;
+    await updateStudySubject(editingSubjectId, {
+      name: subjectEditForm.name.trim(),
+      category_id: subjectEditForm.category_id ? Number(subjectEditForm.category_id) : null,
+      exam_name: subjectEditForm.exam_name.trim() || null,
+      target_minutes: Number(subjectEditForm.target_minutes) || 0,
+      memo: subjectEditForm.memo.trim() || null,
+    });
+    setEditingSubjectId(null);
+    setSubjectEditForm(null);
+    await loadData();
+  }
+
+  async function handleDeleteSubject(id: number) {
+    await deleteStudySubject(id);
     await loadData();
   }
 
@@ -204,13 +304,7 @@ export default function StudyPage() {
       understanding: Number(logForm.understanding) || null,
       memo: logForm.memo.trim() || null,
     });
-    setLogForm((current) => ({
-      ...current,
-      duration_minutes: 120,
-      material: "",
-      unit: "",
-      memo: "",
-    }));
+    setLogForm((current) => ({ ...current, duration_minutes: 120, material: "", unit: "", memo: "" }));
     await loadData();
   }
 
@@ -234,8 +328,7 @@ export default function StudyPage() {
       material: editForm.material.trim() || null,
       unit: editForm.unit.trim() || null,
       method: editForm.method.trim() || null,
-      understanding:
-        editForm.understanding === "" ? null : Number(editForm.understanding),
+      understanding: editForm.understanding === "" ? null : Number(editForm.understanding),
       memo: editForm.memo.trim() || null,
     });
     setEditingLogId(null);
@@ -252,47 +345,16 @@ export default function StudyPage() {
     await loadData();
   }
 
-  const weekDays = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, index) =>
-        addDays(selectedWeekStart, index),
-      ),
-    [selectedWeekStart],
-  );
-  const dailyMap = useMemo(
-    () =>
-      new Map(
-        (summary?.daily_summaries ?? []).map((item) => [
-          item.studied_on,
-          item.total_minutes,
-        ]),
-      ),
-    [summary],
-  );
-  const maxDailyMinutes = Math.max(
-    60,
-    ...weekDays.map((day) => dailyMap.get(toDateKey(day)) ?? 0),
-  );
-  const subjectTargetMinutes =
-    summary?.subject_summaries.reduce(
-      (sum, item) => sum + (item.target_minutes || 0),
-      0,
-    ) ?? 0;
-  const progress =
-    subjectTargetMinutes > 0
-      ? ((summary?.total_minutes ?? 0) / subjectTargetMinutes) * 100
-      : 0;
-  const activeSubjectSummaries = useMemo(
-    () =>
-      (summary?.subject_summaries ?? []).filter(
-        (item) => item.total_minutes > 0,
-      ),
-    [summary],
-  );
-  const pieGradient = useMemo(
-    () => buildPieGradient(activeSubjectSummaries),
-    [activeSubjectSummaries],
-  );
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(selectedWeekStart, index)), [selectedWeekStart]);
+  const dailyMap = useMemo(() => new Map((summary?.daily_summaries ?? []).map((item) => [item.studied_on, item.total_minutes])), [summary]);
+  const maxDailyMinutes = Math.max(60, ...weekDays.map((day) => dailyMap.get(toDateKey(day)) ?? 0));
+  const subjectTargetMinutes = summary?.subject_target_minutes ?? 0;
+  const categoryTargetMinutes = summary?.category_target_minutes ?? 0;
+  const effectiveTargetMinutes = summary?.effective_target_minutes ?? 0;
+  const progress = effectiveTargetMinutes > 0 ? ((summary?.total_minutes ?? 0) / effectiveTargetMinutes) * 100 : 0;
+  const activeSubjectSummaries = useMemo(() => (summary?.subject_summaries ?? []).filter((item) => item.total_minutes > 0), [summary]);
+  const activeCategorySummaries = useMemo(() => (summary?.category_summaries ?? []).filter((item) => item.total_minutes > 0), [summary]);
+  const pieGradient = useMemo(() => buildPieGradient(activeSubjectSummaries), [activeSubjectSummaries]);
 
   return (
     <section className="study-page">
@@ -300,31 +362,16 @@ export default function StudyPage() {
         <div>
           <p className="study-eyebrow">StudyPlus style</p>
           <h1>学習ログ</h1>
-          <p>
-            公認会計士の勉強を「科目・教材・単元・時間」で残します。例：工業簿記
-            2時間。
-          </p>
+          <p>公認会計士などの上位カテゴリを作り、その下に工業簿記・財務会計などの科目をぶら下げて管理します。</p>
         </div>
         <div className="study-week-switch">
-          <button
-            type="button"
-            onClick={() => setWeekOffset((current) => current - 1)}
-          >
-            ‹
-          </button>
+          <button type="button" onClick={() => setWeekOffset((current) => current - 1)}>‹</button>
           <strong>{weekLabel}</strong>
-          <button
-            type="button"
-            onClick={() => setWeekOffset((current) => current + 1)}
-          >
-            ›
-          </button>
+          <button type="button" onClick={() => setWeekOffset((current) => current + 1)}>›</button>
         </div>
       </header>
 
-      {errorMessage && (
-        <p className="study-state study-state--error">{errorMessage}</p>
-      )}
+      {errorMessage && <p className="study-state study-state--error">{errorMessage}</p>}
       {isLoading ? (
         <p className="study-state">読み込み中...</p>
       ) : (
@@ -337,258 +384,81 @@ export default function StudyPage() {
             </article>
             <article className="study-kpi">
               <span>週目標</span>
-              <strong>
-                {subjectTargetMinutes
-                  ? formatMinutes(subjectTargetMinutes)
-                  : "未設定"}
-              </strong>
-              <small>科目別目標の合計</small>
+              <strong>{effectiveTargetMinutes ? formatMinutes(effectiveTargetMinutes) : "未設定"}</strong>
+              <small>上位カテゴリ目標を優先 / 未設定は科目合計</small>
+            </article>
+            <article className="study-kpi">
+              <span>科目別目標の合計</span>
+              <strong>{subjectTargetMinutes ? formatMinutes(subjectTargetMinutes) : "未設定"}</strong>
+              <small>{categoryTargetMinutes ? `上位カテゴリ直指定 ${formatMinutes(categoryTargetMinutes)}` : "上位カテゴリ目標なし"}</small>
             </article>
             <article className="study-kpi">
               <span>達成率</span>
-              <strong>
-                {subjectTargetMinutes ? `${Math.round(progress)}%` : "-"}
-              </strong>
-              <div className="study-progress">
-                <i style={{ width: `${Math.min(100, progress)}%` }} />
-              </div>
+              <strong>{effectiveTargetMinutes ? `${Math.round(progress)}%` : "-"}</strong>
+              <div className="study-progress"><i style={{ width: `${Math.min(100, progress)}%` }} /></div>
             </article>
           </section>
 
           <div className="study-main-grid">
             <section className="study-panel">
-              <div className="study-panel__header">
-                <h2>学習を記録</h2>
-                <span>手入力</span>
-              </div>
+              <div className="study-panel__header"><h2>学習を記録</h2><span>手入力</span></div>
               <form className="study-form" onSubmit={handleCreateLog}>
-                <label>
-                  科目
-                  <select
-                    value={logForm.subject_id}
-                    onChange={(e) =>
-                      setLogForm({ ...logForm, subject_id: e.target.value })
-                    }
-                  >
-                    {subjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  日付
-                  <input
-                    type="date"
-                    value={logForm.studied_on}
-                    onChange={(e) =>
-                      setLogForm({ ...logForm, studied_on: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  時間（分）
-                  <input
-                    type="number"
-                    min="1"
-                    value={logForm.duration_minutes}
-                    onChange={(e) =>
-                      setLogForm({
-                        ...logForm,
-                        duration_minutes: Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  教材
-                  <input
-                    value={logForm.material}
-                    placeholder="例：TAC テキスト"
-                    onChange={(e) =>
-                      setLogForm({ ...logForm, material: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  単元
-                  <input
-                    value={logForm.unit}
-                    placeholder="例：工業簿記 標準原価計算"
-                    onChange={(e) =>
-                      setLogForm({ ...logForm, unit: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  方法
-                  <input
-                    value={logForm.method}
-                    placeholder="講義 / 問題演習 / 復習"
-                    onChange={(e) =>
-                      setLogForm({ ...logForm, method: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  理解度
-                  <select
-                    value={logForm.understanding}
-                    onChange={(e) =>
-                      setLogForm({
-                        ...logForm,
-                        understanding: Number(e.target.value),
-                      })
-                    }
-                  >
-                    {[1, 2, 3, 4, 5].map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="study-form__wide">
-                  メモ
-                  <textarea
-                    value={logForm.memo}
-                    placeholder="詰まった論点、次に復習すること"
-                    onChange={(e) =>
-                      setLogForm({ ...logForm, memo: e.target.value })
-                    }
-                  />
-                </label>
+                <label>科目<select value={logForm.subject_id} onChange={(e) => setLogForm({ ...logForm, subject_id: e.target.value })}>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.category_name ? `${subject.category_name} / ` : ""}{subject.name}</option>)}</select></label>
+                <label>日付<input type="date" value={logForm.studied_on} onChange={(e) => setLogForm({ ...logForm, studied_on: e.target.value })} /></label>
+                <label>時間（分）<input type="number" min="1" value={logForm.duration_minutes} onChange={(e) => setLogForm({ ...logForm, duration_minutes: Number(e.target.value) })} /></label>
+                <label>教材<input value={logForm.material} placeholder="例：TAC テキスト" onChange={(e) => setLogForm({ ...logForm, material: e.target.value })} /></label>
+                <label>単元<input value={logForm.unit} placeholder="例：標準原価計算" onChange={(e) => setLogForm({ ...logForm, unit: e.target.value })} /></label>
+                <label>方法<input value={logForm.method} placeholder="講義 / 問題演習 / 復習" onChange={(e) => setLogForm({ ...logForm, method: e.target.value })} /></label>
+                <label>理解度<select value={logForm.understanding} onChange={(e) => setLogForm({ ...logForm, understanding: Number(e.target.value) })}>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                <label className="study-form__wide">メモ<textarea value={logForm.memo} placeholder="詰まった論点、次に復習すること" onChange={(e) => setLogForm({ ...logForm, memo: e.target.value })} /></label>
                 <button type="submit">学習ログを追加</button>
               </form>
             </section>
 
             <section className="study-panel">
-              <div className="study-panel__header">
-                <h2>科目を追加</h2>
-                <span>最初だけ</span>
-              </div>
-              <form
-                className="study-form study-form--subject"
-                onSubmit={handleCreateSubject}
-              >
-                <label>
-                  科目名
-                  <input
-                    value={subjectForm.name}
-                    placeholder="例：工業簿記"
-                    onChange={(e) =>
-                      setSubjectForm({ ...subjectForm, name: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  試験名
-                  <input
-                    value={subjectForm.exam_name}
-                    onChange={(e) =>
-                      setSubjectForm({
-                        ...subjectForm,
-                        exam_name: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  週目標（分）
-                  <input
-                    type="number"
-                    min="0"
-                    value={subjectForm.target_minutes}
-                    onChange={(e) =>
-                      setSubjectForm({
-                        ...subjectForm,
-                        target_minutes: Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <label className="study-form__wide">
-                  メモ
-                  <textarea
-                    value={subjectForm.memo}
-                    onChange={(e) =>
-                      setSubjectForm({ ...subjectForm, memo: e.target.value })
-                    }
-                  />
-                </label>
-                <button type="submit">科目を追加</button>
+              <div className="study-panel__header"><h2>上位カテゴリを追加</h2><span>例：公認会計士</span></div>
+              <form className="study-form study-form--subject" onSubmit={handleCreateCategory}>
+                <label>カテゴリ名<input value={categoryForm.name} placeholder="例：公認会計士" onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })} /></label>
+                <label>週目標（分）<input type="number" min="0" value={categoryForm.target_minutes} onChange={(e) => setCategoryForm({ ...categoryForm, target_minutes: Number(e.target.value) })} /></label>
+                <label className="study-form__wide">メモ<textarea value={categoryForm.memo} onChange={(e) => setCategoryForm({ ...categoryForm, memo: e.target.value })} /></label>
+                <button type="submit">上位カテゴリを追加</button>
               </form>
             </section>
           </div>
 
+          <section className="study-panel">
+            <div className="study-panel__header"><h2>科目を追加</h2><span>例：公認会計士 / 工業簿記</span></div>
+            <form className="study-form" onSubmit={handleCreateSubject}>
+              <label>上位カテゴリ<select value={subjectForm.category_id} onChange={(e) => setSubjectForm({ ...subjectForm, category_id: e.target.value })}><option value="">未分類</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+              <label>科目名<input value={subjectForm.name} placeholder="例：工業簿記" onChange={(e) => setSubjectForm({ ...subjectForm, name: e.target.value })} /></label>
+              <label>補足名<input value={subjectForm.exam_name} placeholder="例：短答 / 論文" onChange={(e) => setSubjectForm({ ...subjectForm, exam_name: e.target.value })} /></label>
+              <label>週目標（分）<input type="number" min="0" value={subjectForm.target_minutes} onChange={(e) => setSubjectForm({ ...subjectForm, target_minutes: Number(e.target.value) })} /></label>
+              <label className="study-form__wide">メモ<textarea value={subjectForm.memo} onChange={(e) => setSubjectForm({ ...subjectForm, memo: e.target.value })} /></label>
+              <button type="submit">科目を追加</button>
+            </form>
+          </section>
+
           <div className="study-main-grid study-main-grid--analytics">
             <section className="study-panel">
-              <div className="study-panel__header">
-                <h2>日別の学習時間</h2>
-                <span>今週</span>
-              </div>
+              <div className="study-panel__header"><h2>日別の学習時間</h2><span>今週</span></div>
               <div className="study-bars">
                 {weekDays.map((day, index) => {
                   const key = toDateKey(day);
                   const minutes = dailyMap.get(key) ?? 0;
-                  return (
-                    <div className="study-bar-item" key={key}>
-                      <div className="study-bar">
-                        <i
-                          style={{
-                            height: `${(minutes / maxDailyMinutes) * 100}%`,
-                          }}
-                        />
-                      </div>
-                      <span>{DAY_LABELS[index]}</span>
-                      <small>{formatMinutes(minutes)}</small>
-                    </div>
-                  );
+                  return <div className="study-bar-item" key={key}><div className="study-bar"><i style={{ height: `${(minutes / maxDailyMinutes) * 100}%` }} /></div><span>{DAY_LABELS[index]}</span><small>{formatMinutes(minutes)}</small></div>;
                 })}
               </div>
             </section>
 
             <section className="study-panel">
-              <div className="study-panel__header">
-                <h2>時間割合</h2>
-                <span>科目別</span>
-              </div>
-              {activeSubjectSummaries.length === 0 ? (
-                <p className="study-empty">
-                  学習ログを追加すると円グラフが出ます。
-                </p>
-              ) : (
+              <div className="study-panel__header"><h2>時間割合</h2><span>科目別</span></div>
+              {activeSubjectSummaries.length === 0 ? <p className="study-empty">学習ログを追加すると円グラフが出ます。</p> : (
                 <div className="study-pie-layout">
-                  <div
-                    className="study-pie"
-                    style={{ background: `conic-gradient(${pieGradient})` }}
-                  >
-                    <div>
-                      <strong>
-                        {formatMinutes(summary?.total_minutes ?? 0)}
-                      </strong>
-                      <span>合計</span>
-                    </div>
-                  </div>
+                  <div className="study-pie" style={{ background: `conic-gradient(${pieGradient})` }}><div><strong>{formatMinutes(summary?.total_minutes ?? 0)}</strong><span>合計</span></div></div>
                   <div className="study-pie-legend">
                     {activeSubjectSummaries.map((item, index) => {
-                      const share = summary?.total_minutes
-                        ? Math.round(
-                            (item.total_minutes / summary.total_minutes) * 100,
-                          )
-                        : 0;
-                      return (
-                        <div
-                          className="study-pie-legend__item"
-                          key={item.subject_id}
-                        >
-                          <i style={{ background: getPieColor(index) }} />
-                          <span>{item.subject_name}</span>
-                          <strong>{share}%</strong>
-                          <small>{formatMinutes(item.total_minutes)}</small>
-                        </div>
-                      );
+                      const share = summary?.total_minutes ? Math.round((item.total_minutes / summary.total_minutes) * 100) : 0;
+                      return <div className="study-pie-legend__item" key={item.subject_id}><i style={{ background: getPieColor(index) }} /><span>{item.subject_name}</span><strong>{share}%</strong><small>{item.category_name ?? "未分類"} / {formatMinutes(item.total_minutes)}</small></div>;
                     })}
                   </div>
                 </div>
@@ -597,246 +467,98 @@ export default function StudyPage() {
           </div>
 
           <section className="study-panel">
-            <div className="study-panel__header">
-              <h2>科目別</h2>
-              <span>時間順</span>
-            </div>
+            <div className="study-panel__header"><h2>上位カテゴリ別</h2><span>資格・試験単位</span></div>
             <div className="study-subject-list">
-              {(summary?.subject_summaries.length
-                ? summary.subject_summaries
-                : []
-              ).map((item) => {
-                const percent =
-                  item.target_minutes > 0
-                    ? (item.total_minutes / item.target_minutes) * 100
-                    : 0;
-                return (
-                  <article className="study-subject-row" key={item.subject_id}>
-                    <div>
-                      <strong>{item.subject_name}</strong>
-                      <span>{item.exam_name ?? "試験未設定"}</span>
-                    </div>
-                    <em>{formatMinutes(item.total_minutes)}</em>
-                    <div className="study-progress">
-                      <i style={{ width: `${Math.min(100, percent)}%` }} />
-                    </div>
-                    <small>
-                      {item.target_minutes
-                        ? `目標 ${formatMinutes(item.target_minutes)}`
-                        : "目標なし"}
-                    </small>
-                  </article>
-                );
+              {(summary?.category_summaries ?? []).map((item) => {
+                const percent = item.effective_target_minutes > 0 ? (item.total_minutes / item.effective_target_minutes) * 100 : 0;
+                const targetLabel = item.target_minutes > 0
+                  ? `上位目標 ${formatMinutes(item.target_minutes)} / 科目合計 ${formatMinutes(item.subject_target_minutes)}`
+                  : item.subject_target_minutes > 0
+                    ? `科目合計を目標に使用 ${formatMinutes(item.subject_target_minutes)}`
+                    : "目標なし";
+                return <article className="study-category-row" key={item.category_id ?? "none"}><div><strong>{item.category_name}</strong><span>{item.subject_count}科目 / {item.log_count}件</span></div><em>{formatMinutes(item.total_minutes)}</em><div className="study-progress"><i style={{ width: `${Math.min(100, percent)}%` }} /></div><small>{targetLabel}</small></article>;
               })}
-              {subjects.length === 0 && (
-                <p className="study-empty">まず科目を追加してください。</p>
-              )}
+              {activeCategorySummaries.length === 0 && <p className="study-empty">カテゴリ別の学習時間はまだありません。</p>}
             </div>
           </section>
 
           <section className="study-panel">
-            <div className="study-panel__header">
-              <h2>学習ログ一覧</h2>
-              <span>{logs.length}件 / 一覧から編集可</span>
+            <div className="study-panel__header"><h2>上位カテゴリ一覧</h2><span>編集可</span></div>
+            <div className="study-subject-list">
+              {categories.map((category) => (
+                <article className="study-subject-row study-subject-row--editable" key={category.id}>
+                  {editingCategoryId === category.id && categoryEditForm ? (
+                    <form className="study-inline-edit-form" onSubmit={handleUpdateCategory}>
+                      <label>カテゴリ名<input value={categoryEditForm.name} onChange={(e) => setCategoryEditForm({ ...categoryEditForm, name: e.target.value })} /></label>
+                      <label>週目標（分）<input type="number" min="0" value={categoryEditForm.target_minutes} onChange={(e) => setCategoryEditForm({ ...categoryEditForm, target_minutes: Number(e.target.value) })} /></label>
+                      <label className="study-inline-edit-form__wide">メモ<textarea value={categoryEditForm.memo} onChange={(e) => setCategoryEditForm({ ...categoryEditForm, memo: e.target.value })} /></label>
+                      <div className="study-edit-actions"><button type="submit">保存</button><button type="button" className="study-button--ghost" onClick={() => { setEditingCategoryId(null); setCategoryEditForm(null); }}>キャンセル</button></div>
+                    </form>
+                  ) : (
+                    <>
+                      <div><strong>{category.name}</strong><span>{category.memo || "メモなし"}</span></div><em>{formatMinutes(category.target_minutes)}</em>
+                      <div className="study-table-actions"><button type="button" className="study-button--edit" onClick={() => startEditCategory(category)}>編集</button><button type="button" onClick={() => handleDeleteCategory(category.id)}>削除</button></div>
+                    </>
+                  )}
+                </article>
+              ))}
+              {categories.length === 0 && <p className="study-empty">まず「公認会計士」などの上位カテゴリを追加してください。</p>}
             </div>
-            {logs.length === 0 ? (
-              <p className="study-empty">この週の学習ログはまだありません。</p>
-            ) : (
+          </section>
+
+          <section className="study-panel">
+            <div className="study-panel__header"><h2>科目一覧</h2><span>編集可</span></div>
+            <div className="study-subject-list">
+              {subjects.map((subject) => {
+                const summaryItem = summary?.subject_summaries.find((item) => item.subject_id === subject.id);
+                const percent = subject.target_minutes > 0 ? ((summaryItem?.total_minutes ?? 0) / subject.target_minutes) * 100 : 0;
+                return <article className="study-subject-row study-subject-row--editable" key={subject.id}>{editingSubjectId === subject.id && subjectEditForm ? (
+                  <form className="study-inline-edit-form" onSubmit={handleUpdateSubject}>
+                    <label>上位カテゴリ<select value={subjectEditForm.category_id} onChange={(e) => setSubjectEditForm({ ...subjectEditForm, category_id: e.target.value })}><option value="">未分類</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+                    <label>科目名<input value={subjectEditForm.name} onChange={(e) => setSubjectEditForm({ ...subjectEditForm, name: e.target.value })} /></label>
+                    <label>補足名<input value={subjectEditForm.exam_name} onChange={(e) => setSubjectEditForm({ ...subjectEditForm, exam_name: e.target.value })} /></label>
+                    <label>週目標（分）<input type="number" min="0" value={subjectEditForm.target_minutes} onChange={(e) => setSubjectEditForm({ ...subjectEditForm, target_minutes: Number(e.target.value) })} /></label>
+                    <label className="study-inline-edit-form__wide">メモ<textarea value={subjectEditForm.memo} onChange={(e) => setSubjectEditForm({ ...subjectEditForm, memo: e.target.value })} /></label>
+                    <div className="study-edit-actions"><button type="submit">保存</button><button type="button" className="study-button--ghost" onClick={() => { setEditingSubjectId(null); setSubjectEditForm(null); }}>キャンセル</button></div>
+                  </form>
+                ) : (
+                  <>
+                    <div><strong>{subject.name}</strong><span>{subject.category_name ?? "未分類"}{subject.exam_name ? ` / ${subject.exam_name}` : ""}</span></div><em>{formatMinutes(summaryItem?.total_minutes ?? 0)}</em>
+                    <div className="study-progress"><i style={{ width: `${Math.min(100, percent)}%` }} /></div>
+                    <small>{subject.target_minutes ? `目標 ${formatMinutes(subject.target_minutes)}` : "目標なし"}</small>
+                    <div className="study-table-actions"><button type="button" className="study-button--edit" onClick={() => startEditSubject(subject)}>編集</button><button type="button" onClick={() => handleDeleteSubject(subject.id)}>削除</button></div>
+                  </>
+                )}</article>;
+              })}
+              {subjects.length === 0 && <p className="study-empty">まず科目を追加してください。</p>}
+            </div>
+          </section>
+
+          <section className="study-panel">
+            <div className="study-panel__header"><h2>学習ログ一覧</h2><span>{logs.length}件 / 一覧から編集可</span></div>
+            {logs.length === 0 ? <p className="study-empty">この週の学習ログはまだありません。</p> : (
               <div className="study-table-wrap">
                 <table className="study-table">
-                  <thead>
-                    <tr>
-                      <th>日付</th>
-                      <th>科目</th>
-                      <th>教材</th>
-                      <th>単元</th>
-                      <th>時間</th>
-                      <th>理解</th>
-                      <th>メモ</th>
-                      <th />
+                  <thead><tr><th>日付</th><th>カテゴリ</th><th>科目</th><th>教材</th><th>単元</th><th>時間</th><th>理解</th><th>メモ</th><th /></tr></thead>
+                  <tbody>{logs.map((log) => (
+                    <tr key={log.id} className={editingLogId === log.id ? "study-table__editing-row" : undefined}>
+                      {editingLogId === log.id && editForm ? (
+                        <td colSpan={9}><form className="study-edit-form" onSubmit={handleUpdateLog}>
+                          <label>日付<input type="date" value={editForm.studied_on} onChange={(e) => setEditForm({ ...editForm, studied_on: e.target.value })} /></label>
+                          <label>科目<select value={editForm.subject_id} onChange={(e) => setEditForm({ ...editForm, subject_id: e.target.value })}>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.category_name ? `${subject.category_name} / ` : ""}{subject.name}</option>)}</select></label>
+                          <label>時間（分）<input type="number" min="1" value={editForm.duration_minutes} onChange={(e) => setEditForm({ ...editForm, duration_minutes: Number(e.target.value) })} /></label>
+                          <label>教材<input value={editForm.material} onChange={(e) => setEditForm({ ...editForm, material: e.target.value })} /></label>
+                          <label>単元<input value={editForm.unit} onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })} /></label>
+                          <label>方法<input value={editForm.method} onChange={(e) => setEditForm({ ...editForm, method: e.target.value })} /></label>
+                          <label>理解度<select value={editForm.understanding} onChange={(e) => setEditForm({ ...editForm, understanding: e.target.value === "" ? "" : Number(e.target.value) })}><option value="">未設定</option>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                          <label className="study-edit-form__wide">メモ<textarea value={editForm.memo} onChange={(e) => setEditForm({ ...editForm, memo: e.target.value })} /></label>
+                          <div className="study-edit-actions"><button type="submit">保存</button><button type="button" className="study-button--ghost" onClick={() => { setEditingLogId(null); setEditForm(null); }}>キャンセル</button></div>
+                        </form></td>
+                      ) : (
+                        <><td>{log.studied_on}</td><td>{log.category_name ?? "未分類"}</td><td>{log.subject_name}</td><td>{log.material ?? "-"}</td><td>{log.unit ?? "-"}</td><td>{formatMinutes(log.duration_minutes)}</td><td>{log.understanding ? `${log.understanding}/5` : "-"}</td><td>{log.memo || "-"}</td><td><div className="study-table-actions"><button type="button" className="study-button--edit" onClick={() => startEditLog(log)}>編集</button><button type="button" onClick={() => handleDeleteLog(log.id)}>削除</button></div></td></>
+                      )}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {logs.map((log) => (
-                      <tr
-                        key={log.id}
-                        className={
-                          editingLogId === log.id
-                            ? "study-table__editing-row"
-                            : undefined
-                        }
-                      >
-                        {editingLogId === log.id && editForm ? (
-                          <td colSpan={8}>
-                            <form
-                              className="study-edit-form"
-                              onSubmit={handleUpdateLog}
-                            >
-                              <label>
-                                日付
-                                <input
-                                  type="date"
-                                  value={editForm.studied_on}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      studied_on: e.target.value,
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                科目
-                                <select
-                                  value={editForm.subject_id}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      subject_id: e.target.value,
-                                    })
-                                  }
-                                >
-                                  {subjects.map((subject) => (
-                                    <option key={subject.id} value={subject.id}>
-                                      {subject.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                時間（分）
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={editForm.duration_minutes}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      duration_minutes: Number(e.target.value),
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                教材
-                                <input
-                                  value={editForm.material}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      material: e.target.value,
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                単元
-                                <input
-                                  value={editForm.unit}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      unit: e.target.value,
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                方法
-                                <input
-                                  value={editForm.method}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      method: e.target.value,
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                理解度
-                                <select
-                                  value={editForm.understanding}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      understanding:
-                                        e.target.value === ""
-                                          ? ""
-                                          : Number(e.target.value),
-                                    })
-                                  }
-                                >
-                                  <option value="">未設定</option>
-                                  {[1, 2, 3, 4, 5].map((value) => (
-                                    <option key={value} value={value}>
-                                      {value}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label className="study-edit-form__wide">
-                                メモ
-                                <textarea
-                                  value={editForm.memo}
-                                  onChange={(e) =>
-                                    setEditForm({
-                                      ...editForm,
-                                      memo: e.target.value,
-                                    })
-                                  }
-                                />
-                              </label>
-                              <div className="study-edit-actions">
-                                <button type="submit">保存</button>
-                                <button
-                                  type="button"
-                                  className="study-button--ghost"
-                                  onClick={() => {
-                                    setEditingLogId(null);
-                                    setEditForm(null);
-                                  }}
-                                >
-                                  キャンセル
-                                </button>
-                              </div>
-                            </form>
-                          </td>
-                        ) : (
-                          <>
-                            <td>{log.studied_on}</td>
-                            <td>{log.subject_name}</td>
-                            <td>{log.material ?? "-"}</td>
-                            <td>{log.unit ?? "-"}</td>
-                            <td>{formatMinutes(log.duration_minutes)}</td>
-                            <td>
-                              {log.understanding
-                                ? `${log.understanding}/5`
-                                : "-"}
-                            </td>
-                            <td>{log.memo || "-"}</td>
-                            <td>
-                              <div className="study-table-actions">
-                                <button
-                                  type="button"
-                                  className="study-button--edit"
-                                  onClick={() => startEditLog(log)}
-                                >
-                                  編集
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteLog(log.id)}
-                                >
-                                  削除
-                                </button>
-                              </div>
-                            </td>
-                          </>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
+                  ))}</tbody>
                 </table>
               </div>
             )}
