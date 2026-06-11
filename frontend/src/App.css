@@ -8833,3 +8833,105 @@
     justify-self: stretch;
   }
 }
+
+.settings-section-card--wide {
+  grid-column: 1 / -1;
+}
+
+.settings-data-storage {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-data-storage__item {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-data-storage__item span,
+.settings-backup-list span {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.settings-data-storage__item code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.04);
+  color: #0f172a;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.settings-data-storage__stats,
+.settings-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.settings-data-storage__stats span {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.settings-backup-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.settings-backup-list h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.settings-backup-list ul {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.settings-backup-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+/* Settings: keep action buttons readable even when calendar CSS variables are missing. */
+.settings-page .calendar-button {
+  color: #1e293b;
+  background: #fff;
+  border-color: #cbd5e1;
+}
+
+.settings-page .calendar-button--primary {
+  color: #fff;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: transparent;
+  text-shadow: 0 1px 1px rgba(15, 23, 42, 0.24);
+}
+
+.settings-page .calendar-button:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.settings-data-storage__item code {
+  color: #0f172a;
+  word-break: break-all;
+}

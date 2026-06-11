@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.paths import display_user_path, ensure_user_data_dir, ensure_user_database, get_database_path
 from app.db.base import Base
 from app.db.session import engine, AsyncSessionLocal
 from app.db.init_db import (
@@ -27,10 +28,14 @@ from app.api.estimations import router as estimation_router
 from app.api.gap_tasks import router as gap_task_router
 from app.api.assistant import router as assistant_router
 from app.api.study import router as study_router
+from app.api.data_management import router as data_management_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_user_data_dir()
+    ensure_user_database()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -50,7 +55,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_ORIGIN],
+    # Electron の本番表示は file:// 由来で Origin: null になるため、
+    # 開発用 Vite とデスクトップ実行の両方を許可する。
+    allow_origins=[
+        settings.FRONTEND_ORIGIN,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "null",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,6 +81,7 @@ app.include_router(estimation_router)
 app.include_router(gap_task_router)
 app.include_router(assistant_router)
 app.include_router(study_router)
+app.include_router(data_management_router)
 
 
 @app.get("/health")
@@ -77,4 +90,6 @@ async def health_check():
         "status": "ok",
         "app": settings.APP_NAME,
         "env": settings.APP_ENV,
+        "data_dir": display_user_path(get_database_path().parent),
+        "database": display_user_path(get_database_path()),
     }

@@ -357,3 +357,40 @@ git apply --check パッチファイル名.patch
 ```
 
 失敗した場合は、現在のコードとパッチ作成時のコードに差分がある可能性があります。最新のzipを渡して、パッチを作り直してください。
+
+## Electron化へ向けた開発起動
+
+Electron版では、画面はElectron、APIはローカルのFastAPIで動かします。
+DBはユーザー領域 `~/Library/Application Support/LifeManagerData/` に保存されるため、アプリ本体を更新してもデータは残ります。
+
+### 追加セットアップ
+
+リポジトリ直下でElectronを入れます。
+
+```bash
+npm install
+```
+
+### Electron開発起動
+
+```bash
+npm run desktop:dev
+```
+
+内部では以下を行います。
+
+```text
+Viteを起動
+Electronを起動
+ElectronからFastAPIを起動
+Electron画面から http://127.0.0.1:8000 に接続
+```
+
+### フロントエンドだけ本番ビルド確認
+
+```bash
+npm run desktop:build:frontend
+```
+
+この段階ではまだ `.app` / `.dmg` 作成までは行いません。
+次の段階で、FastAPIをPyInstallerで実行ファイル化し、electron-builderで同梱します。

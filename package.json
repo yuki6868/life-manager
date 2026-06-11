@@ -1,0 +1,16 @@
+{
+  "name": "life-manager-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Life Manager desktop shell",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "electron:dev": "electron .",
+    "desktop:dev": "bash scripts/run_electron_dev.sh",
+    "frontend:build": "npm --prefix frontend run build",
+    "desktop:build:frontend": "npm run frontend:build"
+  },
+  "devDependencies": {
+    "electron": "^39.2.6"
+  }
+}

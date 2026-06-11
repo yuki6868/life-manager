@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createBackup, fetchBackups, fetchStorageInfo, type BackupInfo, type StorageInfo } from "../api/dataManagement";
 import {
   DEFAULT_GAP_TASK_SETTINGS,
   DEFAULT_TIMER_SETTINGS,
@@ -36,13 +37,61 @@ export default function SettingsPage() {
   const [timerSettings, setTimerSettings] = useState<TimerSettings>(DEFAULT_TIMER_SETTINGS);
   const [gapTaskSettings, setGapTaskSettings] = useState<GapTaskSettings>(DEFAULT_GAP_TASK_SETTINGS);
   const [message, setMessage] = useState("");
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [dataMessage, setDataMessage] = useState("");
+  const [isBackupRunning, setIsBackupRunning] = useState(false);
 
   useEffect(() => {
     setEnergyLevel(readEnergyLevel());
     setFocusMode(readFocusMode());
     setTimerSettings(readTimerSettings());
     setGapTaskSettings(readGapTaskSettings());
+    loadStorageInfo();
   }, []);
+
+  async function loadStorageInfo() {
+    try {
+      const [storage, backupList] = await Promise.all([fetchStorageInfo(), fetchBackups()]);
+      setStorageInfo(storage);
+      setBackups(backupList);
+    } catch (error) {
+      console.error(error);
+      setDataMessage("保存先情報を取得できませんでした。");
+    }
+  }
+
+  async function handleCreateBackup() {
+    setIsBackupRunning(true);
+    setDataMessage("");
+    try {
+      const result = await createBackup();
+      setDataMessage(result.message);
+      await loadStorageInfo();
+    } catch (error) {
+      console.error(error);
+      setDataMessage("バックアップを作成できませんでした。");
+    } finally {
+      setIsBackupRunning(false);
+    }
+  }
+
+  function maskUserPath(path: string | undefined) {
+    if (!path) {
+      return "確認中...";
+    }
+    return path.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
+  }
+
+  function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+    if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${bytes} B`;
+  }
 
   function updateTimerSetting<K extends keyof TimerSettings>(key: K, value: TimerSettings[K]) {
     setTimerSettings((current) => ({ ...current, [key]: value }));
@@ -79,6 +128,53 @@ export default function SettingsPage() {
       </div>
 
       <div className="settings-sections-grid">
+
+        <section className="dashboard-panel settings-section-card settings-section-card--wide">
+          <div className="dashboard-panel__header">
+            <h2>データ保存・バックアップ</h2>
+            <p>Electron化やアプリ更新で消えて困るデータは、プロジェクト外のユーザー領域に保存します。</p>
+          </div>
+
+          <div className="settings-data-storage">
+            <div className="settings-data-storage__item">
+              <span>保存フォルダ</span>
+              <code>{maskUserPath(storageInfo?.data_dir)}</code>
+            </div>
+            <div className="settings-data-storage__item">
+              <span>DBファイル</span>
+              <code>{maskUserPath(storageInfo?.database_path)}</code>
+            </div>
+            <div className="settings-data-storage__stats">
+              <span>DBサイズ: {storageInfo ? formatBytes(storageInfo.database_size_bytes) : "-"}</span>
+              <span>バックアップ数: {storageInfo?.backup_count ?? 0}</span>
+            </div>
+          </div>
+
+          {dataMessage && <p className="dashboard-info-message">{dataMessage}</p>}
+
+          <div className="settings-actions-row">
+            <button type="button" className="calendar-button calendar-button--primary" onClick={handleCreateBackup} disabled={isBackupRunning}>
+              {isBackupRunning ? "作成中..." : "DBバックアップを作成"}
+            </button>
+            <button type="button" className="calendar-button" onClick={loadStorageInfo}>保存先を再確認</button>
+          </div>
+
+          <div className="settings-backup-list">
+            <h3>最近のバックアップ</h3>
+            {backups.length === 0 ? (
+              <p className="empty-state">まだバックアップはありません。</p>
+            ) : (
+              <ul>
+                {backups.slice(0, 5).map((backup) => (
+                  <li key={backup.filename}>
+                    <strong>{backup.filename}</strong>
+                    <span>{formatBytes(backup.size_bytes)} / {new Date(backup.created_at).toLocaleString()}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
         <section className="dashboard-panel settings-section-card">
           <div className="dashboard-panel__header">
             <h2>集中モード</h2>
