@@ -5,7 +5,7 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const API_PORT = Number(process.env.LIFE_MANAGER_API_PORT || 8000);
+const API_PORT = Number(process.env.LIFE_MANAGER_API_PORT || process.env.API_PORT || 8000);
 const API_BASE_URL = `http://127.0.0.1:${API_PORT}`;
 const isDev = !app.isPackaged;
 
@@ -38,6 +38,13 @@ function ensureDesktopDataDir() {
   return dataDir;
 }
 
+function writeBackendLog(message) {
+  if (!backendLogStream) {
+    return;
+  }
+  backendLogStream.write(`[${new Date().toISOString()}] ${message}\n`);
+}
+
 function requestJson(url, timeoutMs = 1000) {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, (res) => {
@@ -47,14 +54,14 @@ function requestJson(url, timeoutMs = 1000) {
         body += chunk;
       });
       res.on("end", () => {
-        if (res.statusCode !== 200) {
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
           resolve(null);
           return;
         }
         try {
           resolve(JSON.parse(body));
         } catch {
-          resolve(null);
+          resolve({ raw: body });
         }
       });
     });
@@ -67,15 +74,22 @@ function requestJson(url, timeoutMs = 1000) {
   });
 }
 
-async function isLifeManagerBackendReady() {
-  const health = await requestJson(`${API_BASE_URL}/health`);
-  return Boolean(health && health.status === "ok" && health.app === "Life Manager");
+async function isBackendReady() {
+  const healthUrls = [`${API_BASE_URL}/health`, `${API_BASE_URL}/api/health`];
+
+  for (const url of healthUrls) {
+    const health = await requestJson(url);
+    if (health && (health.status === "ok" || health.ok === true || health.raw)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function waitForBackend(timeoutMs = 20000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isLifeManagerBackendReady()) {
+    if (await isBackendReady()) {
       return true;
     }
     await wait(300);
@@ -83,20 +97,72 @@ async function waitForBackend(timeoutMs = 20000) {
   return false;
 }
 
+function fileExists(filePath) {
+  try {
+    return fs.existsSync(filePath);
+  } catch {
+    return false;
+  }
+}
+
+function getExistingCommand(candidates) {
+  return candidates.find((candidate) => fileExists(candidate.command) && (!candidate.cwd || fileExists(candidate.cwd)));
+}
+
 function getBackendCommand() {
   if (isDev) {
+    const backendDir = path.join(__dirname, "..", "backend");
+    const runServerPath = path.join(backendDir, "run_server.py");
+
+    if (fileExists(runServerPath)) {
+      return {
+        command: process.env.PYTHON || "python3",
+        args: [runServerPath],
+        cwd: backendDir,
+      };
+    }
+
     return {
       command: process.env.PYTHON || "python3",
       args: ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
-      cwd: path.join(__dirname, "..", "backend"),
+      cwd: backendDir,
     };
   }
 
-  const executableName = process.platform === "win32" ? "life-manager-backend.exe" : "life-manager-backend";
+  const executableNames = process.platform === "win32"
+    ? ["life-manager-backend.exe", "competitive-debug-backend.exe", "backend.exe"]
+    : ["life-manager-backend", "competitive-debug-backend", "backend"];
+
+  const backendDirs = [
+    path.join(process.resourcesPath, "backend"),
+    path.join(process.resourcesPath, "app.asar.unpacked", "backend"),
+    path.join(process.resourcesPath, "app", "backend"),
+  ];
+
+  const executableCandidates = backendDirs.flatMap((backendDir) =>
+    executableNames.map((executableName) => ({
+      command: path.join(backendDir, executableName),
+      args: ["--host", "127.0.0.1", "--port", String(API_PORT)],
+      cwd: backendDir,
+    })),
+  );
+
+  const runServerCandidates = backendDirs.map((backendDir) => ({
+    command: process.env.PYTHON || "python3",
+    args: [path.join(backendDir, "run_server.py")],
+    cwd: backendDir,
+  }));
+
+  const command = getExistingCommand(executableCandidates) || getExistingCommand(runServerCandidates);
+  if (command) {
+    return command;
+  }
+
   return {
-    command: path.join(process.resourcesPath, "backend", executableName),
-    args: ["--host", "127.0.0.1", "--port", String(API_PORT)],
+    command: "",
+    args: [],
     cwd: process.resourcesPath,
+    error: `backend executable/run_server.py not found. searched: ${backendDirs.join(", ")}`,
   };
 }
 
@@ -111,8 +177,18 @@ function openBackendLogStream() {
 }
 
 function startBackend() {
-  const { command, args, cwd } = getBackendCommand();
+  const { command, args, cwd, error } = getBackendCommand();
   backendLogStream = openBackendLogStream();
+
+  if (error || !command) {
+    writeBackendLog(error || "backend command is empty");
+    throw new Error(error || "backend command is empty");
+  }
+
+  writeBackendLog(`start backend: ${command} ${args.join(" ")}`);
+  writeBackendLog(`cwd: ${cwd}`);
+  writeBackendLog(`resourcesPath: ${process.resourcesPath}`);
+  writeBackendLog(`appPath: ${app.getAppPath()}`);
 
   backendProcess = spawn(command, args, {
     cwd,
@@ -120,22 +196,25 @@ function startBackend() {
       ...process.env,
       FRONTEND_ORIGIN: "null",
       LIFE_MANAGER_API_PORT: String(API_PORT),
+      API_PORT: String(API_PORT),
       LIFE_MANAGER_API_BASE_URL: API_BASE_URL,
+      VITE_API_BASE_URL: API_BASE_URL,
       LIFE_MANAGER_DATA_DIR: getDesktopDataDir(),
     },
     stdio: isDev ? "inherit" : ["ignore", "pipe", "pipe"],
   });
 
+  backendProcess.on("error", (err) => {
+    writeBackendLog(`backend spawn error: ${err.message}`);
+  });
+
   if (!isDev && backendLogStream) {
-    backendLogStream.write(`\n[${new Date().toISOString()}] start backend\n`);
     backendProcess.stdout?.pipe(backendLogStream, { end: false });
     backendProcess.stderr?.pipe(backendLogStream, { end: false });
   }
 
   backendProcess.on("exit", (code) => {
-    if (!isDev && backendLogStream) {
-      backendLogStream.write(`\n[${new Date().toISOString()}] backend exited: ${code}\n`);
-    }
+    writeBackendLog(`backend exited: ${code}`);
     if (code !== 0 && mainWindow) {
       console.error(`Backend exited with code ${code}`);
     }
@@ -181,15 +260,22 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(async () => {
     ensureDesktopDataDir();
 
-    if (!(await isLifeManagerBackendReady())) {
-      startBackend();
+    if (!(await isBackendReady())) {
+      try {
+        startBackend();
+      } catch (err) {
+        dialog.showErrorBox(
+          "バックエンドを起動できませんでした",
+          `${err instanceof Error ? err.message : String(err)}\n\nログ: ${path.join(getDesktopDataDir(), "logs", "backend.log")}`,
+        );
+      }
     }
 
     const backendReady = await waitForBackend();
     if (!backendReady) {
       dialog.showErrorBox(
-        "Life Managerを起動できませんでした",
-        `バックエンドAPIに接続できませんでした。${API_BASE_URL}/health を確認してください。`,
+        "バックエンドAPIに接続できませんでした",
+        `${API_BASE_URL}/health または ${API_BASE_URL}/api/health を確認してください。\n\nログ: ${path.join(getDesktopDataDir(), "logs", "backend.log")}`,
       );
     }
 
@@ -197,7 +283,7 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-app.on("window-all-closed", () => {
+function stopBackend() {
   if (backendProcess) {
     backendProcess.kill();
     backendProcess = null;
@@ -206,14 +292,40 @@ app.on("window-all-closed", () => {
     backendLogStream.end();
     backendLogStream = null;
   }
+}
 
+app.on("window-all-closed", () => {
+  // macOSではウィンドウを閉じてもアプリ本体は終了しない。
+  // ここでbackendを止めると、Dockから再表示したときにfrontendだけ起動してAPI/DBを読めなくなる。
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
 app.on("activate", async () => {
+  if (!(await isBackendReady())) {
+    try {
+      startBackend();
+      const backendReady = await waitForBackend();
+      if (!backendReady) {
+        dialog.showErrorBox(
+          "バックエンドAPIに接続できませんでした",
+          `${API_BASE_URL}/health または ${API_BASE_URL}/api/health を確認してください。\n\nログ: ${path.join(getDesktopDataDir(), "logs", "backend.log")}`,
+        );
+      }
+    } catch (err) {
+      dialog.showErrorBox(
+        "バックエンドを起動できませんでした",
+        `${err instanceof Error ? err.message : String(err)}\n\nログ: ${path.join(getDesktopDataDir(), "logs", "backend.log")}`,
+      );
+    }
+  }
+
   if (BrowserWindow.getAllWindows().length === 0) {
     await createWindow();
   }
+});
+
+app.on("will-quit", () => {
+  stopBackend();
 });

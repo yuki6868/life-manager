@@ -14,7 +14,21 @@ fi
   --clean \
   --paths . \
   --hidden-import app.main \
+  --hidden-import uvicorn \
+  --hidden-import uvicorn.logging \
+  --hidden-import uvicorn.loops.auto \
+  --hidden-import uvicorn.protocols.http.auto \
+  --hidden-import uvicorn.protocols.websockets.auto \
+  --hidden-import fastapi \
+  --hidden-import starlette \
+  --hidden-import aiosqlite \
+  --hidden-import sqlalchemy.dialects.sqlite.aiosqlite \
   --collect-submodules app \
+  --collect-submodules uvicorn \
+  --collect-submodules fastapi \
+  --collect-submodules starlette \
+  --collect-submodules sqlalchemy \
+  --collect-submodules aiosqlite \
   --distpath dist \
   --workpath build
 
