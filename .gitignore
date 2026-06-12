@@ -276,3 +276,6 @@ backend/*.db-*
 
 # macOS
 .DS_Store
+
+# Data
+README_old.md

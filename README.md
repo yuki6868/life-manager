@@ -394,3 +394,92 @@ npm run desktop:build:frontend
 
 この段階ではまだ `.app` / `.dmg` 作成までは行いません。
 次の段階で、FastAPIをPyInstallerで実行ファイル化し、electron-builderで同梱します。
+
+
+# Electron版ビルド手順
+
+## Electron開発モード
+
+```bash
+npm install
+npm run desktop:dev
+```
+
+ElectronからBackendを自動起動し、デスクトップアプリとして実行します。
+
+## Electron配布版作成
+
+### PyInstaller
+
+```bash
+pip install pyinstaller
+```
+
+### Electron Builder
+
+```bash
+npm install --save-dev electron-builder
+```
+
+### Frontendビルド
+
+```bash
+npm run frontend:build
+```
+
+### Backendビルド
+
+```bash
+npm run backend:build:desktop
+```
+
+### 配布前チェック
+
+```bash
+npm run desktop:check
+```
+
+### .app作成
+
+```bash
+npm run desktop:dist:dir
+```
+
+### DMG作成
+
+```bash
+npm run desktop:dist
+```
+
+## CSS変更をElectronへ反映
+
+```bash
+npm run frontend:build
+npm run desktop:dist:dir
+```
+
+## ユーザーデータ保存先
+
+```text
+~/Library/Application Support/LifeManagerData
+```
+
+## バックアップ保存先
+
+```text
+~/Library/Application Support/LifeManagerData/backups
+```
+
+## よくあるエラー
+
+### No module named PyInstaller
+
+```bash
+pip install pyinstaller
+```
+
+### electron-builder: command not found
+
+```bash
+npm install --save-dev electron-builder
+```
